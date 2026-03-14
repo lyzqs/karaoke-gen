@@ -59,3 +59,29 @@ def test_fetch_data_from_source_uses_filename_for_non_lrc_files(tmp_path):
     processor_kwargs = mock_processor_cls.call_args.kwargs
     assert processor_kwargs["input_filename"] == str(lyrics_file)
     assert "input_lyrics_text" not in processor_kwargs
+
+
+def test_convert_result_format_includes_lrc_ruby_annotations(tmp_path):
+    lyrics_file = tmp_path / "reference.lrc"
+    lyrics_file.write_text(
+        "[00:01.00]君を見つめた\n"
+        "@Ruby2=見,み\n"
+        "@Ruby1=君,きみ\n",
+        encoding="utf-8",
+    )
+    provider = _create_provider(lyrics_file)
+    provider.title = "Test Song"
+    provider.artist = "Test Artist"
+
+    lyrics_data = provider._convert_result_format(
+        {
+            "text": "君を見つめた",
+            "source": "file",
+            "filepath": str(lyrics_file),
+        }
+    )
+
+    assert lyrics_data.metadata.provider_metadata["ruby_annotations"] == [
+        {"index": 1, "base_text": "君", "ruby_text": "きみ"},
+        {"index": 2, "base_text": "見", "ruby_text": "み"},
+    ]

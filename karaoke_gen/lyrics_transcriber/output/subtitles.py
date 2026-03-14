@@ -5,6 +5,7 @@ import subprocess
 import json
 
 from karaoke_gen.lyrics_transcriber.output.ass.section_screen import SectionScreen
+from karaoke_gen.lyrics_transcriber.ruby import RubyAnnotation, resolve_ruby_annotations_for_segments
 from karaoke_gen.lyrics_transcriber.types import LyricsSegment, Word
 from karaoke_gen.lyrics_transcriber.output.ass import LyricsScreen, LyricsLine
 from karaoke_gen.lyrics_transcriber.output.ass.ass import ASS
@@ -104,7 +105,13 @@ class SubtitlesGenerator:
                 return duration
             return 0.0
 
-    def generate_ass(self, segments: List[LyricsSegment], output_prefix: str, audio_filepath: str) -> str:
+    def generate_ass(
+        self,
+        segments: List[LyricsSegment],
+        output_prefix: str,
+        audio_filepath: str,
+        ruby_annotations: Optional[List[RubyAnnotation]] = None,
+    ) -> str:
         self.logger.info("Generating ASS format subtitles")
         output_path = self._get_output_path(f"{output_prefix} (Karaoke)", "ass")
 
@@ -112,7 +119,7 @@ class SubtitlesGenerator:
             self.logger.debug(f"Processing {len(segments)} segments")
             song_duration = self._get_audio_duration(audio_filepath, segments)
 
-            screens = self._create_screens(segments, song_duration)
+            screens = self._create_screens(segments, song_duration, ruby_annotations=ruby_annotations)
             self.logger.debug(f"Created {len(screens)} initial screens")
 
             lyric_subtitles_ass = self._create_styled_subtitles(screens, self.video_resolution, self.font_size)
@@ -126,7 +133,12 @@ class SubtitlesGenerator:
             self.logger.error(f"Failed to generate ASS file: {str(e)}", exc_info=True)
             raise
 
-    def _create_screens(self, segments: List[LyricsSegment], song_duration: float) -> List[LyricsScreen]:
+    def _create_screens(
+        self,
+        segments: List[LyricsSegment],
+        song_duration: float,
+        ruby_annotations: Optional[List[RubyAnnotation]] = None,
+    ) -> List[LyricsScreen]:
         """Create screens from segments with detailed logging."""
         self.logger.debug("Creating screens from segments")
 
@@ -162,7 +174,7 @@ class SubtitlesGenerator:
         instrumental_times = self._get_instrumental_times(section_screens)
 
         # Create regular lyric screens
-        lyric_screens = self._create_lyric_screens(segments, instrumental_times)
+        lyric_screens = self._create_lyric_screens(segments, instrumental_times, ruby_annotations=ruby_annotations)
 
         # Merge and process all screens
         all_screens = self._merge_and_process_screens(section_screens, lyric_screens)
@@ -189,10 +201,16 @@ class SubtitlesGenerator:
 
         return instrumental_times
 
-    def _create_lyric_screens(self, segments: List[LyricsSegment], instrumental_times: List[Tuple[float, float]]) -> List[LyricsScreen]:
+    def _create_lyric_screens(
+        self,
+        segments: List[LyricsSegment],
+        instrumental_times: List[Tuple[float, float]],
+        ruby_annotations: Optional[List[RubyAnnotation]] = None,
+    ) -> List[LyricsScreen]:
         """Create regular lyric screens, handling instrumental boundaries."""
         screens: List[LyricsScreen] = []
         current_screen: Optional[LyricsScreen] = None
+        resolved_ruby_annotations = resolve_ruby_annotations_for_segments(segments, ruby_annotations or [], logger=self.logger)
 
         for i, segment in enumerate(segments):
             self.logger.debug(f"Processing segment {i}: {segment.start_time:.2f}s - {segment.end_time:.2f}s")
@@ -215,7 +233,12 @@ class SubtitlesGenerator:
                 self.logger.debug("  Created new screen")
 
             # Add line to current screen
-            line = LyricsLine(logger=self.logger, segment=segment, screen_config=self.config)
+            line = LyricsLine(
+                logger=self.logger,
+                segment=segment,
+                screen_config=self.config,
+                ruby_annotations=resolved_ruby_annotations.get(i, []),
+            )
             current_screen.lines.append(line)
             self.logger.debug(f"  Added line to screen (now has {len(current_screen.lines)} lines)")
 

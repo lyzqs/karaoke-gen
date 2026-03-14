@@ -3,6 +3,7 @@ import logging
 import re
 from typing import Optional, Dict, Any
 from .base_lyrics_provider import BaseLyricsProvider, LyricsProviderConfig
+from karaoke_gen.lyrics_transcriber.ruby import load_ruby_annotations_from_lrc_file
 from karaoke_gen.lyrics_transcriber.types import LyricsData, LyricsMetadata
 from karaoke_lyrics_processor import KaraokeLyricsProcessor
 
@@ -110,6 +111,13 @@ class FileProvider(BaseLyricsProvider):
         self.logger.debug(f"Converting raw data to LyricsData format: {raw_data}")
 
         try:
+            provider_metadata = {"filepath": raw_data["filepath"]}
+            filepath = raw_data["filepath"]
+            if str(filepath).lower().endswith(".lrc"):
+                ruby_annotations = [annotation.to_dict() for annotation in load_ruby_annotations_from_lrc_file(filepath)]
+                if ruby_annotations:
+                    provider_metadata["ruby_annotations"] = ruby_annotations
+
             # Create metadata object
             metadata = LyricsMetadata(
                 source="file",
@@ -118,7 +126,7 @@ class FileProvider(BaseLyricsProvider):
                 lyrics_provider="file",
                 lyrics_provider_id=raw_data["filepath"],
                 is_synced=False,
-                provider_metadata={"filepath": raw_data["filepath"]},
+                provider_metadata=provider_metadata,
             )
 
             # Create segments with words from the processed text

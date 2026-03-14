@@ -7,6 +7,7 @@ import json
 from karaoke_gen.lyrics_transcriber.types import LyricsData
 from karaoke_gen.lyrics_transcriber.correction.corrector import CorrectionResult
 from karaoke_gen.lyrics_transcriber.output.plain_text import PlainTextGenerator
+from karaoke_gen.lyrics_transcriber.ruby import deserialize_ruby_annotations
 from karaoke_gen.lyrics_transcriber.output.lyrics_file import LyricsFileGenerator
 from karaoke_gen.lyrics_transcriber.output.subtitles import SubtitlesGenerator
 from karaoke_gen.lyrics_transcriber.output.video import VideoGenerator
@@ -140,6 +141,42 @@ class OutputGenerator:
         self.logger.debug(f"Initialized OutputGenerator with output_dir: {self.config.output_dir}")
         self.logger.debug(f"Using cache_dir: {self.config.cache_dir}")
 
+    def _get_ruby_annotations(
+        self,
+        transcription_corrected: Optional[CorrectionResult],
+        lyrics_results: dict[str, LyricsData],
+    ):
+        """Return ruby annotations from the file lyrics provider, if available."""
+        candidate_sets = []
+
+        if transcription_corrected and transcription_corrected.reference_lyrics:
+            file_reference = transcription_corrected.reference_lyrics.get("file")
+            if file_reference:
+                candidate_sets.append(file_reference)
+            candidate_sets.extend(transcription_corrected.reference_lyrics.values())
+
+        if lyrics_results:
+            file_reference = lyrics_results.get("file")
+            if file_reference:
+                candidate_sets.append(file_reference)
+            candidate_sets.extend(lyrics_results.values())
+
+        for lyrics_data in candidate_sets:
+            if not lyrics_data:
+                continue
+
+            provider_metadata = getattr(lyrics_data.metadata, "provider_metadata", {}) or {}
+            ruby_payload = provider_metadata.get("ruby_annotations")
+            if not ruby_payload:
+                continue
+
+            ruby_annotations = deserialize_ruby_annotations(ruby_payload)
+            if ruby_annotations:
+                self.logger.info("Using %d ruby annotations from lyrics provider '%s'", len(ruby_annotations), lyrics_data.source)
+                return ruby_annotations
+
+        return []
+
     def generate_outputs(
         self,
         transcription_corrected: Optional[CorrectionResult],
@@ -172,11 +209,17 @@ class OutputGenerator:
                 # Resize corrected segments
                 resized_segments = self.segment_resizer.resize_segments(transcription_corrected.corrected_segments)
                 transcription_corrected.resized_segments = resized_segments
+                ruby_annotations = self._get_ruby_annotations(transcription_corrected, lyrics_results)
 
                 # For preview, we only need to generate ASS and video
                 if self.preview_mode:
                     # Generate ASS subtitles for preview
-                    outputs.ass = self.subtitle.generate_ass(transcription_corrected.resized_segments, output_prefix, audio_filepath)
+                    outputs.ass = self.subtitle.generate_ass(
+                        transcription_corrected.resized_segments,
+                        output_prefix,
+                        audio_filepath,
+                        ruby_annotations=ruby_annotations,
+                    )
 
                     # Generate preview video (unless ass_only mode for GCE encoding)
                     if not ass_only:
@@ -213,7 +256,12 @@ class OutputGenerator:
                 # Generate video if requested
                 if self.config.render_video:
                     # Generate ASS subtitles
-                    outputs.ass = self.subtitle.generate_ass(resized_segments, output_prefix, audio_filepath)
+                    outputs.ass = self.subtitle.generate_ass(
+                        resized_segments,
+                        output_prefix,
+                        audio_filepath,
+                        ruby_annotations=ruby_annotations,
+                    )
                     outputs.video = self.video.generate_video(outputs.ass, audio_filepath, output_prefix)
 
             return outputs

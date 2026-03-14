@@ -5,10 +5,12 @@ from datetime import timedelta
 from PIL import Image, ImageDraw, ImageFont
 import os
 
+from karaoke_gen.lyrics_transcriber.ruby import ResolvedRubyAnnotation
 from karaoke_gen.lyrics_transcriber.types import LyricsSegment
 from karaoke_gen.lyrics_transcriber.output.ass.event import Event
 from karaoke_gen.lyrics_transcriber.output.ass.style import Style
 from karaoke_gen.lyrics_transcriber.output.ass.config import LineState, ScreenConfig
+from karaoke_gen.lyrics_transcriber.output.ass.formatters import Formatters
 
 
 @dataclass
@@ -19,19 +21,23 @@ class LyricsLine:
     screen_config: ScreenConfig
     logger: Optional[logging.Logger] = None
     previous_end_time: Optional[float] = None
+    ruby_annotations: Optional[List[ResolvedRubyAnnotation]] = None
 
     def __post_init__(self):
         """Ensure logger is initialized"""
         if self.logger is None:
             self.logger = logging.getLogger(__name__)
+        if self.ruby_annotations is None:
+            self.ruby_annotations = []
 
-    def _get_font(self, style: Style) -> ImageFont.FreeTypeFont:
+    def _get_font(self, style: Style, font_size: Optional[int] = None) -> ImageFont.FreeTypeFont:
         """Get the font for text measurements."""
         # ASS renders fonts about 70% of their actual size
         ASS_FONT_SCALE = 0.70
 
         # Scale down the font size to match ASS rendering
-        adjusted_size = int(style.Fontsize * ASS_FONT_SCALE)
+        base_font_size = style.Fontsize if font_size is None else font_size
+        adjusted_size = max(int(base_font_size * ASS_FONT_SCALE), 1)
         self.logger.debug(f"Adjusting font size from {style.Fontsize} to {adjusted_size} to match ASS rendering")
 
         try:
@@ -58,6 +64,57 @@ class LyricsLine:
         self.logger.debug(f"Text dimensions for '{text}': width={width}px, height={height}px")
         self.logger.debug(f"Video dimensions: {self.screen_config.video_width}x{self.screen_config.video_height}")
         return width, height
+
+    def _get_ruby_font_size(self, style: Style) -> int:
+        """Return a smaller font size for ruby annotations."""
+        return max(int(style.Fontsize * 0.28), 12)
+
+    def _get_ruby_gap(self, style: Style) -> int:
+        """Return the vertical gap between ruby text and the base lyric line."""
+        return max(int(style.Fontsize * 0.05), 6)
+
+    def _create_ruby_events(self, state: LineState, style: Style, config: ScreenConfig) -> List[Event]:
+        """Create ruby/furigana overlay events for the current line."""
+        if not self.ruby_annotations:
+            return []
+
+        transformed_line = self._apply_case_transform(self.segment.text)
+        line_font = self._get_font(style)
+        line_width, _ = self._get_text_dimensions(transformed_line, line_font)
+        line_left = int(round((config.video_width - line_width) / 2))
+
+        ruby_font_size = self._get_ruby_font_size(style)
+        ruby_gap = self._get_ruby_gap(style)
+        ruby_outline = max(int(round(style.Outline * 0.75)), 1)
+        ruby_primary_color = Formatters.color_to_str(style.SecondaryColour)
+        ruby_outline_color = Formatters.color_to_str(style.OutlineColour)
+
+        events: List[Event] = []
+        for annotation in self.ruby_annotations:
+            prefix_text = self._apply_case_transform(self.segment.text[: annotation.start_char])
+            base_text = self._apply_case_transform(self.segment.text[annotation.start_char : annotation.end_char])
+            prefix_width, _ = self._get_text_dimensions(prefix_text, line_font)
+            base_width, _ = self._get_text_dimensions(base_text, line_font)
+
+            ruby_x = int(round(line_left + prefix_width + (base_width / 2)))
+            ruby_y = int(state.y_position - ruby_gap)
+
+            ruby_event = Event()
+            ruby_event.type = "Dialogue"
+            ruby_event.Layer = 1
+            ruby_event.Style = style
+            ruby_event.Start = state.timing.fade_in_time
+            ruby_event.End = state.timing.end_time
+            ruby_event.Text = (
+                f"{{\\an2}}{{\\pos({ruby_x},{ruby_y})}}"
+                f"{{\\fad({config.fade_in_ms},{config.fade_out_ms})}}"
+                f"{{\\fs{ruby_font_size}}}{{\\bord{ruby_outline}}}{{\\shad0}}"
+                f"{{\\1c{ruby_primary_color}}}{{\\3c{ruby_outline_color}}}"
+                f"{annotation.ruby_text}"
+            )
+            events.append(ruby_event)
+
+        return events
 
     # fmt: off
     def _create_lead_in_text(self, state: LineState) -> Tuple[str, bool]:
@@ -218,6 +275,7 @@ class LyricsLine:
 
         main_event.Text = text
         events.append(main_event)
+        events.extend(self._create_ruby_events(state, style, config))
 
         return events
 
