@@ -16,7 +16,8 @@ class LyricsProcessor:
     COUNTDOWN_PADDING_SECONDS = 3.0
     
     def __init__(
-        self, logger, style_params_json, lyrics_file, skip_transcription, skip_transcription_review, render_video, subtitle_offset_ms
+        self, logger, style_params_json, lyrics_file, skip_transcription, skip_transcription_review, render_video, subtitle_offset_ms,
+        offline: bool = False
     ):
         self.logger = logger
         self.style_params_json = style_params_json
@@ -25,6 +26,7 @@ class LyricsProcessor:
         self.skip_transcription_review = skip_transcription_review
         self.render_video = render_video
         self.subtitle_offset_ms = subtitle_offset_ms
+        self.offline = offline
 
     def _detect_countdown_padding_from_lrc(self, lrc_filepath):
         """
@@ -180,6 +182,16 @@ class LyricsProcessor:
         configured = []
         missing = []
 
+        if self.offline:
+            try:
+                import whisper_timestamped  # noqa: F401
+                configured.append("Local Whisper")
+                self.logger.debug("Offline mode: Local Whisper transcription provider available")
+            except ImportError:
+                missing.append("Local Whisper (pip install karaoke-gen[local-whisper])")
+                self.logger.debug("Offline mode: Local Whisper transcription provider missing")
+            return {"configured": configured, "missing": missing}
+
         # Check AudioShake
         audioshake_token = os.getenv("AUDIOSHAKE_API_TOKEN")
         if audioshake_token:
@@ -218,6 +230,20 @@ class LyricsProcessor:
 
     def _build_transcription_provider_error_message(self, missing_providers: list) -> str:
         """Build a helpful error message when no transcription providers are configured."""
+        if self.offline:
+            return (
+                "Offline mode requires Local Whisper for word-level auto-timing.\n"
+                "\n"
+                "Install the local Whisper dependencies:\n"
+                "  pip install karaoke-gen[local-whisper]\n"
+                "\n"
+                "For CPU-only systems:\n"
+                "  pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu\n"
+                "  pip install karaoke-gen[local-whisper]\n"
+                "\n"
+                f"Missing provider configurations: {', '.join(missing_providers)}"
+            )
+
         return (
             "No transcription providers configured!\n"
             "\n"
@@ -356,12 +382,12 @@ class LyricsProcessor:
         # Load environment variables
         load_dotenv()
         env_config = {
-            "audioshake_api_token": os.getenv("AUDIOSHAKE_API_TOKEN"),
-            "genius_api_token": os.getenv("GENIUS_API_TOKEN"),
-            "spotify_cookie": os.getenv("SPOTIFY_COOKIE_SP_DC"),
-            "runpod_api_key": os.getenv("RUNPOD_API_KEY"),
-            "whisper_runpod_id": os.getenv("WHISPER_RUNPOD_ID"),
-            "rapidapi_key": os.getenv("RAPIDAPI_KEY"),  # Add missing RAPIDAPI_KEY
+            "audioshake_api_token": None if self.offline else os.getenv("AUDIOSHAKE_API_TOKEN"),
+            "genius_api_token": None if self.offline else os.getenv("GENIUS_API_TOKEN"),
+            "spotify_cookie": None if self.offline else os.getenv("SPOTIFY_COOKIE_SP_DC"),
+            "runpod_api_key": None if self.offline else os.getenv("RUNPOD_API_KEY"),
+            "whisper_runpod_id": None if self.offline else os.getenv("WHISPER_RUNPOD_ID"),
+            "rapidapi_key": None if self.offline else os.getenv("RAPIDAPI_KEY"),
         }
 
         # Create config objects for LyricsTranscriber
@@ -378,6 +404,7 @@ class LyricsProcessor:
             spotify_cookie=env_config.get("spotify_cookie"),
             rapidapi_key=env_config.get("rapidapi_key"),
             lyrics_file=self.lyrics_file,
+            disable_online_sources=self.offline,
         )
         
         # Debug logging for lyrics_config
@@ -409,7 +436,7 @@ class LyricsProcessor:
             output_dir=lyrics_dir,
             render_video=False,  # Always defer - caller handles video rendering after countdown
             allow_preview_video=self.render_video,  # Allow preview videos unless --no-video is set
-            fetch_lyrics=True,
+            fetch_lyrics=bool(self.lyrics_file) or not self.offline,
             run_transcription=not self.skip_transcription,
             run_correction=not skip_correction,  # Disabled when SKIP_CORRECTION=true
             generate_plain_text=True,

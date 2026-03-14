@@ -16,7 +16,16 @@ import asyncio
 import time
 import glob
 import shutil
-import pyperclip
+
+try:
+    import pyperclip
+except ImportError:  # pragma: no cover - dependency availability is environment-specific
+    class _PyperclipFallback:
+        @staticmethod
+        def copy(_: str) -> None:
+            raise RuntimeError("pyperclip is not installed")
+
+    pyperclip = _PyperclipFallback()
 from karaoke_gen import KaraokePrep
 from karaoke_gen.karaoke_finalise import KaraokeFinalise
 from karaoke_gen.audio_fetcher import UserCancelledError
@@ -791,6 +800,16 @@ async def async_main():
     log_level = getattr(logging, args.log_level.upper())
     logger.setLevel(log_level)
 
+    if getattr(args, 'offline', False):
+        if input_media is None:
+            logger.error("Offline mode requires a local audio file or folder. Artist/title-only search is not supported.")
+            sys.exit(1)
+            return
+        if is_url(input_media):
+            logger.error("Offline mode requires a local audio file or folder. URL inputs are not supported.")
+            sys.exit(1)
+            return
+
     # Set up environment variables for lyrics-only mode
     if args.lyrics_only:
         args.skip_separation = True
@@ -845,6 +864,7 @@ async def async_main():
         background_video_darkness=args.background_video_darkness,
         auto_download=getattr(args, 'auto_download', False),
         render_video=render_video_in_prep,  # Only render if review is skipped
+        offline=getattr(args, 'offline', False),
     )
     # No await needed for constructor
     kprep = kprep_coroutine

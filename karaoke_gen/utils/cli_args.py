@@ -71,6 +71,11 @@ def create_parser(prog: str = "karaoke-gen") -> argparse.ArgumentParser:
         help="Skip fetching and processing lyrics. Example: --skip-lyrics",
     )
     workflow_group.add_argument(
+        "--offline",
+        action="store_true",
+        help="Run fully offline: require local audio input, disable cloud transcription and online lyrics lookup, and use Local Whisper for auto-timing.",
+    )
+    workflow_group.add_argument(
         "--lyrics-only",
         action="store_true",
         help="Only process lyrics, skipping audio separation and title/end screen generation. Example: --lyrics-only",

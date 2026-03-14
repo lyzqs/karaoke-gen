@@ -83,6 +83,7 @@ class KaraokePrep:
         background_video_darkness=50,
         # Audio Fetcher Configuration
         auto_download=False,
+        offline=False,
     ):
         self.log_level = log_level
         self.log_formatter = log_formatter
@@ -149,7 +150,8 @@ class KaraokePrep:
 
         # Audio Fetcher Config (replaces yt-dlp)
         self.auto_download = auto_download  # If True, automatically select best audio source
-        
+        self.offline = offline
+
         # Initialize audio fetcher for searching and downloading audio when no input file is provided
         self.audio_fetcher = create_audio_fetcher(logger=self.logger)
 
@@ -203,6 +205,7 @@ class KaraokePrep:
              skip_transcription_review=self.skip_transcription_review,
              render_video=self.render_video,
              subtitle_offset_ms=self.subtitle_offset_ms,
+             offline=self.offline,
         )
 
         self.video_generator = VideoGenerator(
@@ -1131,6 +1134,8 @@ class KaraokePrep:
             self.logger.info(f"Input media {self.input_media} is a local file, audio download will be skipped")
             return [await self.prep_single_track()]
         elif self.input_media is not None and self._is_url(self.input_media):
+            if self.offline:
+                raise ValueError("Offline mode requires a local audio file or folder. URLs are not supported.")
             # URL provided - download directly via flacfetch
             self.logger.info(f"Input media {self.input_media} is a URL, downloading via flacfetch...")
 
@@ -1166,6 +1171,8 @@ class KaraokePrep:
 
             return [await self.prep_single_track()]
         elif self.artist and self.title:
+            if self.offline:
+                raise ValueError("Offline mode requires a local audio file or folder. Online audio search is not supported.")
             # No input file provided - use flacfetch to search and download audio
             self.logger.info(f"No input file provided, using flacfetch to search for: {self.artist} - {self.title}")
 

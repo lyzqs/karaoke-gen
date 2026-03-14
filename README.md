@@ -32,6 +32,7 @@ Both CLIs produce identical outputs: 4K karaoke videos, CDG+MP3 packages, audio 
 ### Core Pipeline
 - **Audio Separation**: AI-powered vocal/instrumental separation using MDX and Demucs models
 - **Lyrics Transcription**: Word-level timestamps via AudioShake API
+- **Offline Auto-Timing**: Pure local Whisper timing with optional local lyrics-file alignment
 - **Lyrics Correction**: Match transcription against online lyrics (Genius, Spotify, Musixmatch)
 - **Human Review**: Interactive UI for correcting lyrics before final render
 - **Video Rendering**: High-quality 4K karaoke videos with customizable styles
@@ -102,6 +103,19 @@ pip install "karaoke-gen[local-whisper]"
 ```
 
 Local Whisper runs automatically as a fallback when no cloud transcription services are configured.
+
+#### Fully Offline Local Auto-Timing
+To keep the entire auto-timing chain offline, use a local audio file together with `--offline`.
+
+```bash
+karaoke-gen --offline ./song.flac "Artist" "Title" --lyrics_file ./lyrics.txt
+```
+
+In `--offline` mode:
+- AudioShake and RunPod are disabled
+- Online lyrics providers are disabled
+- Local Whisper is required for word-level timing
+- A local lyrics file is recommended for best alignment accuracy
 
 #### Option 3: Whisper via RunPod
 Cloud-based alternative using OpenAI's Whisper model on RunPod infrastructure.
@@ -181,6 +195,21 @@ karaoke-gen \
 ```bash
 karaoke-gen --help
 ```
+
+## 🌐 Local WebUI
+
+Start a lightweight local upload UI for fully offline generation:
+
+```bash
+karaoke-gen-webui
+```
+
+The WebUI provides:
+- Audio file upload
+- Lyrics file upload
+- Local Whisper model/device selection
+- Background offline generation using `karaoke-gen --offline`
+- Live logs and downloadable output files when rendering finishes
 
 ---
 

@@ -93,6 +93,7 @@ def mock_base_args():
         list_themes=False,
         validate_theme=False,
         theme=None,
+        offline=False,
         auto_download=False,  # New flacfetch parameter
         enable_cdg=False,
         enable_txt=False,
@@ -219,6 +220,47 @@ async def test_arg_parsing_artist_title_only(mock_kprep_class, mock_isdir, mock_
     # Verify message about flacfetch search is shown (in stderr since logger.propagate = False)
     captured = capsys.readouterr()
     assert "flacfetch will search for" in captured.err
+
+@patch("karaoke_gen.utils.gen_cli.is_url", return_value=False)
+@patch("karaoke_gen.utils.gen_cli.is_file", return_value=True)
+@patch("karaoke_gen.utils.gen_cli.KaraokePrep")
+async def test_offline_flag_passed_to_karaoke_prep(mock_kprep_class, mock_isfile, mock_isurl, mock_base_args):
+    """Offline mode should be forwarded to KaraokePrep."""
+    mock_base_args.args = ["/path/to/song.flac", "ABBA", "Waterloo"]
+    mock_base_args.offline = True
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[MOCK_PREP_TRACK])
+
+    with patch("karaoke_gen.utils.gen_cli.argparse.ArgumentParser") as mock_parser:
+        mock_parser.return_value.parse_args.return_value = mock_base_args
+        await gen_cli.async_main()
+
+    assert mock_kprep_class.call_args.kwargs["offline"] is True
+
+@patch("karaoke_gen.utils.gen_cli.is_url", return_value=False)
+@patch("karaoke_gen.utils.gen_cli.is_file", return_value=False)
+@patch("karaoke_gen.utils.gen_cli.os.path.isdir", return_value=False)
+@patch("karaoke_gen.utils.gen_cli.sys.exit")
+@patch("karaoke_gen.utils.gen_cli.KaraokePrep")
+async def test_offline_mode_rejects_artist_title_search(
+    mock_kprep_class,
+    mock_exit,
+    mock_isdir,
+    mock_isfile,
+    mock_isurl,
+    mock_base_args,
+):
+    """Offline mode should reject flacfetch-based audio search."""
+    mock_base_args.args = ["ABBA", "Waterloo"]
+    mock_base_args.offline = True
+
+    with patch("karaoke_gen.utils.gen_cli.argparse.ArgumentParser") as mock_parser:
+        mock_parser.return_value.parse_args.return_value = mock_base_args
+        await gen_cli.async_main()
+
+    mock_exit.assert_called_once_with(1)
+    mock_kprep_class.assert_not_called()
 
 @patch("karaoke_gen.utils.gen_cli.is_url", return_value=False)
 @patch("karaoke_gen.utils.gen_cli.is_file", return_value=False)

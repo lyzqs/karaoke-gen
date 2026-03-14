@@ -155,6 +155,7 @@ dev = ["black", "pytest", "pytest-cov", "pytest-mock"]
 karaoke-gen = 'karaoke_gen.utils.gen_cli:main'
 karaoke-gen-remote = 'karaoke_gen.utils.remote_cli:main'
 karaoke-bulk = 'karaoke_gen.utils.bulk_cli:main'
+karaoke-gen-webui = 'karaoke_gen.local_webui:main'
 
 [tool.black]
 line-length = 140

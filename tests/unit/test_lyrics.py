@@ -224,6 +224,75 @@ class TestLyrics:
             assert result["ass_filepath"] == mock_results.ass_filepath
             assert result["corrected_lyrics_text"] == "Line 1\nLine 2"
             assert result["corrected_lyrics_text_filepath"] == mock_results.corrected_txt
+
+    def test_transcribe_lyrics_offline_mode_disables_cloud_providers(self, basic_karaoke_gen, temp_dir):
+        """Offline mode should only configure local Whisper and local lyrics sources."""
+        track_output_dir = os.path.join(temp_dir, "track")
+        os.makedirs(track_output_dir, exist_ok=True)
+
+        artist = "Test Artist"
+        title = "Test Title"
+        input_audio_wav = os.path.join(temp_dir, "input.wav")
+        with open(input_audio_wav, "w") as f:
+            f.write("mock audio content")
+
+        basic_karaoke_gen.lyrics_processor.offline = True
+        basic_karaoke_gen.lyrics_processor.lyrics_file = None
+
+        mock_transcriber = MagicMock()
+        mock_transcriber_instance = MagicMock()
+        mock_transcriber.return_value = mock_transcriber_instance
+
+        mock_results = MagicMock()
+        mock_results.lrc_filepath = os.path.join(track_output_dir, "lyrics", "test.lrc")
+        mock_results.ass_filepath = os.path.join(track_output_dir, "lyrics", "test.ass")
+        mock_results.video_filepath = os.path.join(track_output_dir, "lyrics", "test.mkv")
+        mock_results.corrected_txt = os.path.join(track_output_dir, "lyrics", "test.txt")
+        mock_results.transcription_corrected = MagicMock()
+        mock_results.transcription_corrected.corrected_segments = []
+        mock_results.transcription_corrected.to_dict.return_value = {"corrected_segments": []}
+        mock_transcriber_instance.process.return_value = mock_results
+
+        mock_env = {
+            "AUDIOSHAKE_API_TOKEN": "test_token",
+            "GENIUS_API_TOKEN": "test_token",
+            "SPOTIFY_COOKIE_SP_DC": "test_cookie",
+            "RUNPOD_API_KEY": "test_key",
+            "WHISPER_RUNPOD_ID": "test_id",
+            "RAPIDAPI_KEY": "rapid_key",
+        }
+
+        lyrics_dir = os.path.join(track_output_dir, "lyrics")
+        os.makedirs(lyrics_dir, exist_ok=True)
+
+        with patch('karaoke_gen.lyrics_processor.LyricsTranscriber', mock_transcriber), \
+             patch('os.path.exists', return_value=False), \
+             patch('shutil.copy2'), \
+             patch('os.getenv', side_effect=lambda key, default=None: mock_env.get(key, default)), \
+             patch('karaoke_gen.lyrics_processor.load_dotenv'):
+
+            basic_karaoke_gen.lyrics_processor.transcribe_lyrics(
+                input_audio_wav,
+                artist,
+                title,
+                track_output_dir,
+            )
+
+        call_args = mock_transcriber.call_args[1]
+        transcriber_config = call_args["transcriber_config"]
+        lyrics_config = call_args["lyrics_config"]
+        output_config = call_args["output_config"]
+
+        assert transcriber_config.audioshake_api_token is None
+        assert transcriber_config.runpod_api_key is None
+        assert transcriber_config.whisper_runpod_id is None
+        assert transcriber_config.enable_local_whisper is True
+
+        assert lyrics_config.genius_api_token is None
+        assert lyrics_config.spotify_cookie is None
+        assert lyrics_config.rapidapi_key is None
+        assert lyrics_config.disable_online_sources is True
+        assert output_config.fetch_lyrics is False
     
     def test_backup_existing_outputs(self, basic_karaoke_gen, temp_dir):
         """Test backing up existing outputs."""

@@ -28,6 +28,7 @@ class LyricsConfig:
     rapidapi_key: Optional[str] = None
     spotify_cookie: Optional[str] = None
     lyrics_file: Optional[str] = None
+    disable_online_sources: bool = False
 
 @dataclass
 class OutputConfig:

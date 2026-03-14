@@ -264,6 +264,10 @@ class LyricsTranscriber:
             providers["file"] = FileProvider(config=provider_config, logger=self.logger)
             return providers
 
+        if self.lyrics_config.disable_online_sources:
+            self.logger.info("Online lyrics providers disabled by configuration")
+            return providers
+
         # LRCLIB - always enabled (no API key required)
         self.logger.debug("Initializing LRCLIB lyrics provider")
         providers["lrclib"] = LRCLIBProvider(config=provider_config, logger=self.logger)
@@ -398,10 +402,11 @@ class LyricsTranscriber:
                 # Continue with normal processing if loading fails
 
         # Normal processing flow continues...
-        if self.output_config.fetch_lyrics and self.artist and self.title:
+        has_local_lyrics_file = bool(self.lyrics_config.lyrics_file)
+        if self.output_config.fetch_lyrics and ((self.artist and self.title) or has_local_lyrics_file):
             self.fetch_lyrics()
         else:
-            self.logger.info("Skipping lyrics fetching - no artist/title provided or fetching disabled")
+            self.logger.info("Skipping lyrics fetching - no lyrics source available or fetching disabled")
 
         # Step 2: Run transcription if enabled
         if self.output_config.run_transcription:
