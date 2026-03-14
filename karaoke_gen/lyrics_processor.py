@@ -273,7 +273,7 @@ class LyricsProcessor:
             "ALTERNATIVES:\n"
             "\n"
             "- Use --skip-lyrics flag to generate instrumental-only karaoke (no synchronized lyrics)\n"
-            "- Use --lyrics_file to provide pre-timed lyrics (still needs transcription for timing)\n"
+            "- Use --lyrics_file to provide reference lyrics (txt/docx/rtf/lrc). LRC timestamps are stripped and transcription still provides timing.\n"
             "\n"
             f"Missing provider configurations: {', '.join(missing_providers)}\n"
             "\n"

@@ -44,7 +44,7 @@ def create_arg_parser() -> argparse.ArgumentParser:
     song_group = parser.add_argument_group("Song Identification")
     song_group.add_argument("--artist", help="Song artist for lyrics lookup and auto-correction")
     song_group.add_argument("--title", help="Song title for lyrics lookup and auto-correction")
-    song_group.add_argument("--lyrics_file", help="Path to file containing lyrics (txt, docx, or rtf format)")
+    song_group.add_argument("--lyrics_file", help="Path to file containing reference lyrics (txt, docx, rtf, or lrc format)")
 
     # API Credentials
     api_group = parser.add_argument_group("API Credentials")

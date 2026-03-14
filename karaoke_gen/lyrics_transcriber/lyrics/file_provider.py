@@ -1,5 +1,6 @@
 from pathlib import Path
 import logging
+import re
 from typing import Optional, Dict, Any
 from .base_lyrics_provider import BaseLyricsProvider, LyricsProviderConfig
 from karaoke_gen.lyrics_transcriber.types import LyricsData, LyricsMetadata
@@ -8,6 +9,10 @@ from karaoke_lyrics_processor import KaraokeLyricsProcessor
 
 class FileProvider(BaseLyricsProvider):
     """Provider that loads lyrics from a local file."""
+
+    _LRC_METADATA_PATTERN = re.compile(r"^(?:\[(?:ar|ti|al|by|offset|length|re|ve|la):[^\]]*])+\s*$", re.IGNORECASE)
+    _LRC_LINE_TIMESTAMP_PATTERN = re.compile(r"\[(?:\d{1,3}):(?:[0-5]\d)(?:[.:]\d{1,3})?]")
+    _LRC_INLINE_TIMESTAMP_PATTERN = re.compile(r"<(?:\d{1,3}):(?:[0-5]\d)(?:[.:]\d{1,3})?>")
 
     def __init__(self, config: LyricsProviderConfig, logger: Optional[logging.Logger] = None):
         super().__init__(config, logger)
@@ -45,13 +50,27 @@ class FileProvider(BaseLyricsProvider):
             formatter = None
             if self.logger.handlers and len(self.logger.handlers) > 0 and hasattr(self.logger.handlers[0], 'formatter'):
                 formatter = self.logger.handlers[0].formatter
-            
-            processor = KaraokeLyricsProcessor(
-                log_level=self.logger.getEffectiveLevel(),
-                log_formatter=formatter,
-                input_filename=str(lyrics_file),
-                max_line_length=self.max_line_length,
-            )
+
+            processor_kwargs = {
+                "log_level": self.logger.getEffectiveLevel(),
+                "log_formatter": formatter,
+                "max_line_length": self.max_line_length,
+            }
+
+            if lyrics_file.suffix.lower() == ".lrc":
+                normalized_lrc_text = self._normalize_lrc_reference_text(lyrics_file)
+                if not normalized_lrc_text:
+                    self.logger.warning(
+                        "LRC lyrics file %s did not contain any usable lyric lines after stripping timing tags", lyrics_file
+                    )
+                    return None
+
+                self.logger.info("Converted LRC reference lyrics to plain text before processing")
+                processor_kwargs["input_lyrics_text"] = normalized_lrc_text
+            else:
+                processor_kwargs["input_filename"] = str(lyrics_file)
+
+            processor = KaraokeLyricsProcessor(**processor_kwargs)
 
             self.logger.debug("Created KaraokeLyricsProcessor instance")
             processed_text = processor.process()
@@ -66,6 +85,25 @@ class FileProvider(BaseLyricsProvider):
         except Exception as e:
             self.logger.error(f"Error processing lyrics file: {str(e)}", exc_info=True)
             return None
+
+    def _normalize_lrc_reference_text(self, lyrics_file: Path) -> str:
+        """Strip LRC timing/metadata tags so the file can be used as reference lyrics text."""
+        normalized_lines = []
+        raw_text = lyrics_file.read_text(encoding="utf-8-sig", errors="replace")
+
+        for raw_line in raw_text.splitlines():
+            line = raw_line.strip()
+            if not line or self._LRC_METADATA_PATTERN.fullmatch(line):
+                continue
+
+            line = self._LRC_LINE_TIMESTAMP_PATTERN.sub("", line)
+            line = self._LRC_INLINE_TIMESTAMP_PATTERN.sub("", line)
+            line = re.sub(r"\s+", " ", line).strip()
+
+            if line:
+                normalized_lines.append(line)
+
+        return "\n".join(normalized_lines)
 
     def _convert_result_format(self, raw_data: Dict[str, Any]) -> LyricsData:
         """Convert the raw file data to LyricsData format."""
