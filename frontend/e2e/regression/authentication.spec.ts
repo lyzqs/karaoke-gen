@@ -17,7 +17,9 @@ test.describe('Authentication - Magic Link', () => {
     await setupApiFixtures(page, { mocks: [] });
 
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    await expect(
+      page.getByRole('heading', { name: /create a karaoke video for any song/i })
+    ).toBeVisible();
 
     await page.getByRole('button', { name: /sign in/i }).click();
 
@@ -30,7 +32,9 @@ test.describe('Authentication - Magic Link', () => {
     await setupApiFixtures(page, { mocks: [] });
 
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    await expect(
+      page.getByRole('heading', { name: /create a karaoke video for any song/i })
+    ).toBeVisible();
 
     await page.getByRole('button', { name: /sign in/i }).click();
 
@@ -62,7 +66,9 @@ test.describe('Authentication - Magic Link', () => {
     });
 
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    await expect(
+      page.getByRole('heading', { name: /create a karaoke video for any song/i })
+    ).toBeVisible();
 
     await page.getByRole('button', { name: /sign in/i }).click();
 
@@ -81,7 +87,9 @@ test.describe('Authentication - Token Persistence', () => {
   test('localStorage can store and retrieve tokens', async ({ page }) => {
     // This tests the browser's localStorage functionality
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    await expect(
+      page.getByRole('heading', { name: /create a karaoke video for any song/i })
+    ).toBeVisible();
 
     // Set a token
     await page.evaluate(() => {
@@ -94,7 +102,7 @@ test.describe('Authentication - Token Persistence', () => {
 
     // Token survives navigation
     await page.goto('/#pricing');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('heading', { name: /simple pricing/i })).toBeVisible();
 
     const tokenAfter = await page.evaluate(() => localStorage.getItem('test_token'));
     expect(tokenAfter).toBe('my-test-value');
