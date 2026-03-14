@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test"
+import { test, expect, type Page } from "@playwright/test"
 import { setAuthToken } from "../fixtures/test-helper"
 
 /**
@@ -32,10 +32,71 @@ const mockYouTubeQueue = {
   stats: { queued: 0, processing: 0, failed: 0, completed: 0, total: 0 },
 }
 
+async function gotoRateLimitsPage(page: Page) {
+  await page.goto("/admin/rate-limits")
+  await expect(page).toHaveURL(/\/admin\/rate-limits\/?$/)
+  await expect(page.getByRole("heading", { name: /rate limits/i })).toBeVisible()
+}
+
 test.describe("Admin Rate Limits Page", () => {
   test.beforeEach(async ({ page }) => {
     // Set auth token for admin access
     await setAuthToken(page, "test-admin-token")
+
+    // Mock shared app-shell requests so page-level smoke tests can settle quickly.
+    await page.route("**/api/tenant/config", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          tenant: null,
+          is_default: true,
+        }),
+      })
+    })
+
+    await page.route("**/api/info", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          version: "test",
+        }),
+      })
+    })
+
+    await page.route("**/api/health/encoding-worker", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          available: false,
+          status: "not_configured",
+        }),
+      })
+    })
+
+    await page.route("**/api/health/flacfetch", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          available: false,
+          status: "not_configured",
+        }),
+      })
+    })
+
+    await page.route("**/api/push/vapid-public-key", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          enabled: false,
+          vapid_public_key: null,
+        }),
+      })
+    })
 
     // Mock all API routes that the rate limits page needs
     await page.route("**/api/users/me", async (route) => {
@@ -87,14 +148,13 @@ test.describe("Admin Rate Limits Page", () => {
           body: JSON.stringify({ success: true }),
         })
       } else {
-        await route.continue()
+        await route.fallback()
       }
     })
   })
 
   test("rate limits page loads and shows title", async ({ page }) => {
-    await page.goto("/admin/rate-limits")
-    await page.waitForLoadState("networkidle")
+    await gotoRateLimitsPage(page)
 
     // Check page title
     await expect(page.locator("h1")).toContainText("Rate Limits")
@@ -104,8 +164,7 @@ test.describe("Admin Rate Limits Page", () => {
   })
 
   test("both tabs are visible", async ({ page }) => {
-    await page.goto("/admin/rate-limits")
-    await page.waitForLoadState("networkidle")
+    await gotoRateLimitsPage(page)
 
     // Check all tabs are present
     await expect(page.getByRole("tab", { name: /youtube queue/i })).toBeVisible()
@@ -113,8 +172,7 @@ test.describe("Admin Rate Limits Page", () => {
   })
 
   test("can switch between tabs", async ({ page }) => {
-    await page.goto("/admin/rate-limits")
-    await page.waitForLoadState("networkidle")
+    await gotoRateLimitsPage(page)
 
     // YouTube Queue is default
     await expect(page.getByRole("tab", { name: /youtube queue/i })).toHaveAttribute(
@@ -131,21 +189,20 @@ test.describe("Admin Rate Limits Page", () => {
   })
 
   test("refresh button is visible and clickable", async ({ page }) => {
-    await page.goto("/admin/rate-limits")
-    await page.waitForLoadState("networkidle")
+    await gotoRateLimitsPage(page)
 
     // Check refresh button exists and click it
     const refreshButton = page.getByRole("button", { name: /refresh/i })
     await expect(refreshButton).toBeVisible()
     await refreshButton.click()
 
-    // Should not throw error
-    await page.waitForLoadState("networkidle")
+    // Smoke test: refresh keeps the page interactive and on the same route.
+    await expect(refreshButton).toBeVisible()
+    await expect(page).toHaveURL(/\/admin\/rate-limits\/?$/)
   })
 
   test("blocklists tab shows domain search input", async ({ page }) => {
-    await page.goto("/admin/rate-limits")
-    await page.waitForLoadState("networkidle")
+    await gotoRateLimitsPage(page)
 
     // Navigate to blocklists tab
     await page.getByRole("tab", { name: /blocklists/i }).click()

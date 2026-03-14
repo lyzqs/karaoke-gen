@@ -6,18 +6,35 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEST_TIMEOUT="${TEST_TIMEOUT:-600}"
 
 echo "🧪 Running integration tests with GCP emulators"
 echo "=============================================="
 echo ""
 
-# Start emulators
-echo "Step 1/3: Starting emulators..."
-"$SCRIPT_DIR/start-emulators.sh"
+emulators_running() {
+    curl -sf http://127.0.0.1:8080 >/dev/null 2>&1 && \
+    curl -sf http://127.0.0.1:4443/storage/v1/b >/dev/null 2>&1
+}
+
+STARTED_EMULATORS=0
+
+if emulators_running; then
+    echo "Step 1/3: Reusing already-running emulators..."
+elif docker info >/dev/null 2>&1; then
+    echo "Step 1/3: Starting emulators..."
+    "$SCRIPT_DIR/start-emulators.sh"
+    STARTED_EMULATORS=1
+else
+    echo "⚠️  Skipping emulator integration tests: Docker is unavailable and emulators are not already running."
+    exit 0
+fi
 echo ""
 
-# Ensure we stop emulators on exit
-trap "$SCRIPT_DIR/stop-emulators.sh" EXIT
+# Only stop emulators if this script started them.
+if [ "$STARTED_EMULATORS" -eq 1 ]; then
+    trap "$SCRIPT_DIR/stop-emulators.sh" EXIT
+fi
 
 # Set environment variables for tests
 export FIRESTORE_EMULATOR_HOST="127.0.0.1:8080"
@@ -53,7 +70,7 @@ echo ""
 cd "$PROJECT_ROOT"
 
 # Run the emulator integration tests with more verbose output on failure
-if $PYTEST_CMD backend/tests/emulator/ -v --tb=short --color=yes --log-cli-level=ERROR; then
+if timeout "$TEST_TIMEOUT" $PYTEST_CMD backend/tests/emulator/ -v --tb=short --color=yes --log-cli-level=ERROR; then
     echo ""
     echo "✅ All emulator integration tests passed!"
     echo ""
@@ -73,4 +90,3 @@ else
     echo ""
     exit 1
 fi
-

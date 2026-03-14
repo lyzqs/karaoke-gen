@@ -14,6 +14,7 @@ from .utils import sanitize_filename
 class LyricsProcessor:
     # Standard countdown padding duration used by LyricsTranscriber
     COUNTDOWN_PADDING_SECONDS = 3.0
+    offline = False
     
     def __init__(
         self, logger, style_params_json, lyrics_file, skip_transcription, skip_transcription_review, render_video, subtitle_offset_ms,

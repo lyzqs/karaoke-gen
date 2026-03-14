@@ -59,7 +59,16 @@ def client():
          patch('backend.services.storage_service.storage'), \
          patch('google.auth.default', return_value=(mock_creds, 'test-project')):
         from backend.main import app
-        yield TestClient(app)
+        from backend.api.dependencies import require_auth, require_admin
+
+        previous_overrides = dict(app.dependency_overrides)
+        app.dependency_overrides.pop(require_auth, None)
+        app.dependency_overrides.pop(require_admin, None)
+        try:
+            yield TestClient(app)
+        finally:
+            app.dependency_overrides.clear()
+            app.dependency_overrides.update(previous_overrides)
 
 
 @pytest.fixture
@@ -340,4 +349,3 @@ class TestWorkerIdempotency:
             assert response.status_code == 200
             data = response.json()
             assert data["status"] == "not_found"
-

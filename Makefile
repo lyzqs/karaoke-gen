@@ -7,6 +7,9 @@
 # Prevents hangs from stale dev servers, broken emulators, etc.
 # Override with: make test TEST_TIMEOUT=300
 TEST_TIMEOUT ?= 600
+# Full frontend test runs include the serial Playwright regression suite,
+# which can exceed the general 10 minute cap in local CI-like environments.
+FRONTEND_TEST_TIMEOUT ?= 1200
 
 # Default target
 help:
@@ -72,17 +75,7 @@ test-backend-unit: install-backend
 # Run E2E integration tests with emulators
 test-e2e: install-backend
 	@echo "=== Running E2E integration tests with emulators ==="
-	@./scripts/start-emulators.sh || (echo "Failed to start emulators" && exit 1)
-	@export FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 && \
-	export STORAGE_EMULATOR_HOST=http://127.0.0.1:4443 && \
-	export GOOGLE_CLOUD_PROJECT=test-project && \
-	export GCS_BUCKET_NAME=test-bucket && \
-	export ADMIN_TOKENS=test-admin-token && \
-	export ENVIRONMENT=test && \
-	timeout $(TEST_TIMEOUT) poetry run pytest backend/tests/emulator/ -v; \
-	TEST_RESULT=$$?; \
-	./scripts/stop-emulators.sh; \
-	exit $$TEST_RESULT
+	@TEST_TIMEOUT=$(TEST_TIMEOUT) ./scripts/run-emulator-tests.sh
 
 # Run all backend tests (unit + emulator)
 test-backend: test-unit test-backend-unit test-e2e
@@ -92,7 +85,7 @@ test-backend: test-unit test-backend-unit test-e2e
 # Run frontend tests (unit + E2E)
 test-frontend: install-frontend
 	@echo "=== Running frontend tests ==="
-	cd frontend && timeout $(TEST_TIMEOUT) npm run test:all
+	cd frontend && timeout $(FRONTEND_TEST_TIMEOUT) npm run test:all
 
 # Run ALL tests (backend + frontend) - use this before committing!
 test: test-backend test-frontend
@@ -126,4 +119,3 @@ clean:
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	rm -rf htmlcov/ .coverage coverage.xml 2>/dev/null || true
 	@echo "Cleaned up temporary files"
-

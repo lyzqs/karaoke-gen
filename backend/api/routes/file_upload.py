@@ -17,7 +17,7 @@ import tempfile
 import os
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Body, Depends
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Callable
 
 from pydantic import BaseModel, Field
 
@@ -55,6 +55,22 @@ def _is_youtube_url(url: str) -> bool:
         'youtube.com', 'youtu.be', 'youtube-nocookie.com'
     ])
 router = APIRouter(tags=["jobs"])
+
+
+class _LazyServiceProxy:
+    """Instantiate external services only when a route actually uses them."""
+
+    def __init__(self, factory: Callable[[], Any]):
+        self._factory = factory
+        self._instance: Optional[Any] = None
+
+    def _get_instance(self) -> Any:
+        if self._instance is None:
+            self._instance = self._factory()
+        return self._instance
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get_instance(), name)
 
 
 def _apply_tenant_overrides(
@@ -263,8 +279,8 @@ class StyleUploadsCompleteRequest(BaseModel):
     color_overrides: Optional[Dict[str, str]] = Field(None, description="Color overrides: artist_color, title_color (hex #RRGGBB)")
 
 # Initialize services
-job_manager = JobManager()
-storage_service = StorageService()
+job_manager = _LazyServiceProxy(JobManager)
+storage_service = _LazyServiceProxy(StorageService)
 worker_service = get_worker_service()
 
 

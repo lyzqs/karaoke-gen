@@ -19,7 +19,7 @@ import shutil
 import tempfile
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Depends
 from pydantic import BaseModel, Field, validator
@@ -69,9 +69,25 @@ STYLE_FILE_TYPES = {
 }
 router = APIRouter(tags=["audio-search"])
 
+
+class _LazyServiceProxy:
+    """Instantiate external services only when a route actually uses them."""
+
+    def __init__(self, factory: Callable[[], Any]):
+        self._factory = factory
+        self._instance: Optional[Any] = None
+
+    def _get_instance(self) -> Any:
+        if self._instance is None:
+            self._instance = self._factory()
+        return self._instance
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get_instance(), name)
+
 # Initialize services
-job_manager = JobManager()
-storage_service = StorageService()
+job_manager = _LazyServiceProxy(JobManager)
+storage_service = _LazyServiceProxy(StorageService)
 worker_service = get_worker_service()
 
 
@@ -1191,5 +1207,4 @@ async def select_audio_source(
         selected_artist=selection_info['selected_artist'],
         selected_provider=selection_info['selected_provider'],
     )
-
 

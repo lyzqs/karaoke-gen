@@ -14,7 +14,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Callable
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request, UploadFile, File
 
 from datetime import datetime
@@ -48,8 +48,24 @@ from pydantic import BaseModel, Field, validator
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
+
+class _LazyServiceProxy:
+    """Instantiate external services only when a route actually uses them."""
+
+    def __init__(self, factory: Callable[[], Any]):
+        self._factory = factory
+        self._instance: Optional[Any] = None
+
+    def _get_instance(self) -> Any:
+        if self._instance is None:
+            self._instance = self._factory()
+        return self._instance
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._get_instance(), name)
+
 # Initialize services
-job_manager = JobManager()
+job_manager = _LazyServiceProxy(JobManager)
 worker_service = get_worker_service()
 settings = get_settings()
 

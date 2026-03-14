@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -591,10 +592,15 @@ class LocalWebUIServer:
 
             job.returncode = returncode
             if returncode == 0:
-                job.status = "completed"
                 job.outputs = self._collect_outputs(job)
-                primary_video = next((item for item in job.outputs if item["kind"] == "video"), None)
-                job.primary_video_url = primary_video["url"] if primary_video else None
+                primary_video = self._find_primary_video(job)
+                if primary_video is None:
+                    job.status = "failed"
+                    job.error = "karaoke-gen finished but did not produce a playable MP4 output"
+                else:
+                    job.status = "completed"
+                    job.error = None
+                    job.primary_video_url = primary_video["url"]
             else:
                 job.status = "failed"
                 job.error = f"karaoke-gen exited with status {returncode}"
@@ -639,6 +645,58 @@ class LocalWebUIServer:
         if item["kind"] == "video":
             return (3, label)
         return (4, label)
+
+    def _find_primary_video(self, job: LocalJob) -> Optional[Dict[str, str]]:
+        mp4_outputs = [
+            item
+            for item in job.outputs
+            if item["kind"] == "video" and item["label"].lower().endswith(".mp4")
+        ]
+
+        for item in mp4_outputs:
+            path = self._resolve_job_path(job.output_dir, item["label"])
+            if self._is_playable_video(path):
+                return item
+        return None
+
+    def _is_playable_video(self, path: Path) -> bool:
+        if not path.is_file() or path.stat().st_size <= 0:
+            return False
+
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-print_format",
+                    "json",
+                    "-show_entries",
+                    "format=duration:stream=codec_type",
+                    str(path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            return False
+
+        try:
+            probe = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return False
+
+        streams = probe.get("streams", [])
+        has_video_stream = any(stream.get("codec_type") == "video" for stream in streams)
+
+        duration_raw = probe.get("format", {}).get("duration")
+        try:
+            duration = float(duration_raw)
+        except (TypeError, ValueError):
+            duration = 0.0
+
+        return has_video_stream and duration > 0
 
     def _serialize_job(self, job: LocalJob) -> Dict[str, object]:
         return {

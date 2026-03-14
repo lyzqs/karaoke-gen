@@ -269,6 +269,11 @@ class TestLyrics:
              patch('os.path.exists', return_value=False), \
              patch('shutil.copy2'), \
              patch('os.getenv', side_effect=lambda key, default=None: mock_env.get(key, default)), \
+             patch.object(
+                 basic_karaoke_gen.lyrics_processor,
+                 "_check_transcription_providers",
+                 return_value={"configured": ["Local Whisper"], "missing": []},
+             ), \
              patch('karaoke_gen.lyrics_processor.load_dotenv'):
 
             basic_karaoke_gen.lyrics_processor.transcribe_lyrics(

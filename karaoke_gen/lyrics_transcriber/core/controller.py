@@ -345,7 +345,7 @@ class LyricsTranscriber:
             self.logger.warning("No API-related environment variables found")
             
         # Log all env vars if in debug mode
-        if self.logger.getEffectiveLevel() <= logging.DEBUG:
+        if self._is_debug_logging_enabled():
             self.logger.debug(f"All environment variables: {env_vars}")
 
         # Check for existing corrections JSON
@@ -439,6 +439,19 @@ class LyricsTranscriber:
 
         self.logger.info("Processing completed successfully")
         return self.results
+
+    def _is_debug_logging_enabled(self) -> bool:
+        """Handle mocked or wrapped loggers without assuming an int log level."""
+        get_effective_level = getattr(self.logger, "getEffectiveLevel", None)
+        if not callable(get_effective_level):
+            return False
+
+        try:
+            level = get_effective_level()
+        except Exception:
+            return False
+
+        return isinstance(level, int) and level <= logging.DEBUG
 
     def fetch_lyrics(self) -> None:
         """Fetch lyrics from available providers."""
