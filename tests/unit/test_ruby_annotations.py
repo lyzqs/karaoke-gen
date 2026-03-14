@@ -135,3 +135,21 @@ def test_resolve_ruby_annotations_for_segments_matches_split_compounds_without_p
         segment_index, annotation = resolved_by_index[index]
         matched_text = segments[segment_index].text[annotation.start_char : annotation.end_char].replace(" ", "")
         assert matched_text == expected_base_text
+
+
+def test_resolve_ruby_annotations_for_segments_resolves_repeated_meeting_targets_in_order():
+    segments = [
+        _make_segment("seg-1", "甘 い 恋 を あげたいよ 君 と ずっと 会 いたい"),
+        _make_segment("seg-2", "も っと 会 いたくて"),
+    ]
+    annotations = [
+        RubyAnnotation(index=18, base_text="会", ruby_text="あ"),
+        RubyAnnotation(index=37, base_text="会", ruby_text="あ"),
+    ]
+
+    resolved = resolve_ruby_annotations_for_segments(segments, annotations)
+
+    assert [annotation.index for annotation in resolved[0]] == [18]
+    assert [annotation.index for annotation in resolved[1]] == [37]
+    assert segments[0].text[resolved[0][0].start_char : resolved[0][0].end_char].replace(" ", "") == "会"
+    assert segments[1].text[resolved[1][0].start_char : resolved[1][0].end_char].replace(" ", "") == "会"

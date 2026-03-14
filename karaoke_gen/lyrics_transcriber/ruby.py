@@ -153,10 +153,12 @@ def resolve_ruby_annotations_for_segments(
     compact_segments = [_compact_text_with_index_map(segment.text) for segment in segments]
     used_spans: Dict[int, List[Tuple[int, int]]] = {index: [] for index in range(len(segments))}
     segment_index = 0
+    unresolved_count = 0
 
     for annotation in annotations:
         normalized_base_text = "".join(char for char in annotation.base_text if not char.isspace())
         if not normalized_base_text:
+            unresolved_count += 1
             logger.warning(
                 "Could not resolve ruby annotation @Ruby%s=%s,%s onto output segments",
                 annotation.index,
@@ -195,6 +197,7 @@ def resolve_ruby_annotations_for_segments(
             break
 
         if not found:
+            unresolved_count += 1
             logger.warning(
                 "Could not resolve ruby annotation @Ruby%s=%s,%s onto output segments",
                 annotation.index,
@@ -204,5 +207,11 @@ def resolve_ruby_annotations_for_segments(
 
     for annotations_for_segment in resolved.values():
         annotations_for_segment.sort(key=lambda item: (item.start_char, item.end_char, item.index))
+
+    logger.info(
+        "Resolved %d/%d ruby annotations onto output segments",
+        len(annotations) - unresolved_count,
+        len(annotations),
+    )
 
     return resolved
