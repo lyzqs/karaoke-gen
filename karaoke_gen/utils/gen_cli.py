@@ -353,7 +353,9 @@ def run_combined_review(
     # Get separation results
     separated = track.get("separated_audio", {})
     if not separated:
-        logger.info("No separated audio found, running lyrics-only review")
+        logger.info(
+            "No separated audio found, running lyric review without instrumental selection options"
+        )
         # Still run review for lyrics editing, just without instrumental options
 
     # Find audio paths
@@ -449,7 +451,7 @@ def run_combined_review(
     if instrumental_options:
         logger.info(f"Prepared {len(instrumental_options)} instrumental options for selection")
     else:
-        logger.info("No instrumental options available (lyrics-only review)")
+        logger.info("No instrumental options available; continuing with lyric review only")
 
     try:
         # Create and start review server with combined data

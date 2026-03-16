@@ -83,13 +83,23 @@ def test_refresh_job_exposes_playable_mp4_preview(tmp_path):
 
     with patch("karaoke_gen.local_webui.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(
-            stdout='{"streams":[{"codec_type":"video"}],"format":{"duration":"12.5"}}'
+            stdout='{"streams":[{"codec_type":"video","width":1280,"height":720}],"format":{"duration":"12.5"}}'
         )
         server._refresh_job(job)
 
     assert job.status == "completed"
     assert job.primary_video_url == "/api/jobs/job123/files/Test Artist - Test Title (Final Karaoke Lossy 720p).mp4"
-    assert any(output["label"] == "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4" for output in job.outputs)
+    primary_output = next(
+        output
+        for output in job.outputs
+        if output["label"] == "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4"
+    )
+    assert primary_output["display_label"] == "Default 720p MP4 (with vocals)"
+    assert primary_output["badge"] == "Primary"
+    assert any(
+        output["display_label"] == "Secondary 720p MP4 (instrumental)"
+        for output in job.outputs
+    )
 
 
 def test_refresh_job_fails_when_mp4_is_not_playable(tmp_path):
@@ -124,7 +134,42 @@ def test_refresh_job_fails_when_mp4_is_not_playable(tmp_path):
 
     assert job.status == "failed"
     assert job.primary_video_url is None
-    assert "default with-vocals MP4" in job.error
+    assert "1280x720 default with-vocals MP4" in job.error
+
+
+def test_refresh_job_rejects_non_720p_default_output(tmp_path):
+    server = LocalWebUIServer(base_dir=tmp_path)
+    output_dir = tmp_path / "job" / "output"
+    output_dir.mkdir(parents=True)
+    primary_video_path = output_dir / "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4"
+    primary_video_path.write_bytes(b"video-bytes")
+
+    process = MagicMock()
+    process.poll.return_value = 0
+
+    job = LocalJob(
+        job_id="job123",
+        artist="Test Artist",
+        title="Test Title",
+        created_at="2026-03-14T00:00:00+00:00",
+        work_dir=tmp_path / "job",
+        upload_dir=tmp_path / "job" / "uploads",
+        output_dir=output_dir,
+        log_path=tmp_path / "job" / "job.log",
+        command=["python"],
+        env_overrides={},
+        process=process,
+    )
+
+    with patch("karaoke_gen.local_webui.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(
+            stdout='{"streams":[{"codec_type":"video","width":3840,"height":2160}],"format":{"duration":"12.5"}}'
+        )
+        server._refresh_job(job)
+
+    assert job.status == "failed"
+    assert job.primary_video_url is None
+    assert "1280x720 default with-vocals MP4" in job.error
 
 
 def test_refresh_job_rejects_instrumental_only_mp4_output(tmp_path):
@@ -153,13 +198,13 @@ def test_refresh_job_rejects_instrumental_only_mp4_output(tmp_path):
 
     with patch("karaoke_gen.local_webui.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(
-            stdout='{"streams":[{"codec_type":"video"}],"format":{"duration":"12.5"}}'
+            stdout='{"streams":[{"codec_type":"video","width":1280,"height":720}],"format":{"duration":"12.5"}}'
         )
         server._refresh_job(job)
 
     assert job.status == "failed"
     assert job.primary_video_url is None
-    assert "default with-vocals MP4" in job.error
+    assert "1280x720 default with-vocals MP4" in job.error
 
 
 def test_output_sort_key_prefers_720p_deliverable(tmp_path):

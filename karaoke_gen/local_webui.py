@@ -166,16 +166,40 @@ INDEX_HTML = """<!doctype html>
       margin-top: 10px;
       white-space: pre-wrap;
     }
-    #outputs a {
-      display: block;
+    .output-item {
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .output-item:last-child {
+      border-bottom: 0;
+    }
+    .output-link {
       color: var(--accent);
       text-decoration: none;
-      padding: 8px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      font-weight: 600;
+      word-break: break-word;
+    }
+    .output-meta {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
       word-break: break-all;
     }
-    #outputs a:last-child {
-      border-bottom: 0;
+    .output-badge {
+      display: inline-flex;
+      margin-left: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(110, 231, 183, 0.35);
+      color: var(--accent);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .output-badge.secondary {
+      border-color: rgba(159, 176, 200, 0.3);
+      color: var(--muted);
     }
     #log {
       width: 100%;
@@ -297,11 +321,31 @@ INDEX_HTML = """<!doctype html>
       }
 
       job.outputs.forEach((output) => {
+        const item = document.createElement('div');
+        item.className = 'output-item';
+
         const link = document.createElement('a');
         link.href = output.url;
-        link.textContent = output.label;
+        link.className = 'output-link';
+        link.textContent = output.display_label || output.label;
         link.target = '_blank';
-        outputsEl.appendChild(link);
+        item.appendChild(link);
+
+        if (output.badge) {
+          const badge = document.createElement('span');
+          badge.className = `output-badge${output.badge.toLowerCase() === 'secondary' ? ' secondary' : ''}`;
+          badge.textContent = output.badge;
+          link.appendChild(badge);
+        }
+
+        if (output.display_label && output.display_label !== output.label) {
+          const meta = document.createElement('span');
+          meta.className = 'output-meta';
+          meta.textContent = output.label;
+          item.appendChild(meta);
+        }
+
+        outputsEl.appendChild(item);
       });
 
       if (job.primary_video_url) {
@@ -597,7 +641,10 @@ class LocalWebUIServer:
                 primary_video = self._find_primary_video(job)
                 if primary_video is None:
                     job.status = "failed"
-                    job.error = "karaoke-gen finished but did not produce a playable default with-vocals MP4 output"
+                    job.error = (
+                        "karaoke-gen finished but did not produce a playable "
+                        "1280x720 default with-vocals MP4 output"
+                    )
                 else:
                     job.status = "completed"
                     job.error = None
@@ -624,16 +671,39 @@ class LocalWebUIServer:
 
         for path in candidates:
             relative_path = str(path.relative_to(job.output_dir))
-            files.append(
-                {
-                    "kind": kind_by_suffix[path.suffix.lower()],
-                    "label": relative_path,
-                    "url": f"/api/jobs/{job.job_id}/files/{relative_path}",
-                }
-            )
+            item = {
+                "kind": kind_by_suffix[path.suffix.lower()],
+                "label": relative_path,
+                "url": f"/api/jobs/{job.job_id}/files/{relative_path}",
+            }
+            item.update(self._output_presentation(item))
+            files.append(item)
 
         files.sort(key=self._output_sort_key)
         return files
+
+    def _output_presentation(self, item: Dict[str, str]) -> Dict[str, str]:
+        label = item["label"].lower()
+        if self._is_default_vocals_video(item):
+            return {
+                "display_label": "Default 720p MP4 (with vocals)",
+                "badge": "Primary",
+            }
+        if item["kind"] == "video" and "(karaoke).mp4" in label:
+            return {
+                "display_label": "Secondary 720p MP4 (instrumental)",
+                "badge": "Secondary",
+            }
+        if item["kind"] == "video" and (
+            "(with vocals).mkv" in label
+            or "(with vocals).mov" in label
+            or "with_vocals.mkv" in label
+            or "with_vocals.mov" in label
+        ):
+            return {
+                "display_label": "Intermediate source render (with vocals)",
+            }
+        return {}
 
     def _output_sort_key(self, item: Dict[str, str]) -> tuple[int, str]:
         label = item["label"].lower()
@@ -667,11 +737,15 @@ class LocalWebUIServer:
 
         for item in default_outputs:
             path = self._resolve_job_path(job.output_dir, item["label"])
-            if self._is_playable_video(path):
+            if self._is_playable_video(path, expected_resolution=(1280, 720)):
                 return item
         return None
 
-    def _is_playable_video(self, path: Path) -> bool:
+    def _is_playable_video(
+        self,
+        path: Path,
+        expected_resolution: Optional[tuple[int, int]] = None,
+    ) -> bool:
         if not path.is_file() or path.stat().st_size <= 0:
             return False
 
@@ -684,7 +758,7 @@ class LocalWebUIServer:
                     "-print_format",
                     "json",
                     "-show_entries",
-                    "format=duration:stream=codec_type",
+                    "format=duration:stream=codec_type,width,height",
                     str(path),
                 ],
                 check=True,
@@ -700,7 +774,11 @@ class LocalWebUIServer:
             return False
 
         streams = probe.get("streams", [])
-        has_video_stream = any(stream.get("codec_type") == "video" for stream in streams)
+        video_stream = next(
+            (stream for stream in streams if stream.get("codec_type") == "video"),
+            None,
+        )
+        has_video_stream = video_stream is not None
 
         duration_raw = probe.get("format", {}).get("duration")
         try:
@@ -708,7 +786,20 @@ class LocalWebUIServer:
         except (TypeError, ValueError):
             duration = 0.0
 
-        return has_video_stream and duration > 0
+        if not (has_video_stream and duration > 0):
+            return False
+
+        if expected_resolution is None:
+            return True
+
+        expected_width, expected_height = expected_resolution
+        try:
+            width = int(video_stream.get("width") or 0)
+            height = int(video_stream.get("height") or 0)
+        except (TypeError, ValueError, AttributeError):
+            return False
+
+        return width == expected_width and height == expected_height
 
     def _serialize_job(self, job: LocalJob) -> Dict[str, object]:
         return {

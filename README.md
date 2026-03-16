@@ -116,6 +116,8 @@ In `--offline` mode:
 - Online lyrics providers are disabled
 - Local Whisper is required for word-level timing
 - A local lyrics file is recommended for best alignment accuracy
+- The default delivered MP4 remains a vocals-preserving 1280x720 file
+- Any instrumental or no-vocals video should be treated as an optional secondary output
 
 #### Option 3: Whisper via RunPod
 Cloud-based alternative using OpenAI's Whisper model on RunPod infrastructure.
@@ -210,6 +212,10 @@ The WebUI provides:
 - Local Whisper model/device selection
 - Background offline generation using `karaoke-gen --offline`
 - Live logs and downloadable output files when rendering finishes
+- A default 720p MP4 download and preview that preserve the original vocals
+- Secondary instrumental-only video output only when a separate instrumental render exists
+
+For local-model offline visual sign-off, use [docs/local-offline-visual-acceptance.md](docs/local-offline-visual-acceptance.md). Tester evidence must come from self-captured frames and crops from the current final MP4, not ASS files or logs.
 
 ---
 
