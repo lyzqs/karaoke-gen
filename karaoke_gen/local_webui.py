@@ -207,7 +207,8 @@ INDEX_HTML = """<!doctype html>
     <h1>Offline Karaoke Generator</h1>
     <p class="lead">
       Upload local audio and an optional lyrics file, then run the full karaoke generation pipeline
-      without AudioShake, RunPod, or online lyrics APIs. This path uses Local Whisper for word-level timing.
+      without AudioShake, RunPod, or online lyrics APIs. This path uses Local Whisper for word-level timing
+      and delivers a 720p karaoke MP4 without title or end-card overlays.
     </p>
 
     <div class="layout">
@@ -636,15 +637,19 @@ class LocalWebUIServer:
 
     def _output_sort_key(self, item: Dict[str, str]) -> tuple[int, str]:
         label = item["label"].lower()
-        if "(lossless 4k).mp4" in label:
+        if "final karaoke lossy 720p" in label or "(lossy 720p).mp4" in label:
             return (0, label)
-        if "(lossy 4k).mp4" in label:
+        if "(karaoke).mp4" in label:
             return (1, label)
-        if "(lossy 720p).mp4" in label:
+        if "(with vocals).mp4" in label:
             return (2, label)
-        if item["kind"] == "video":
+        if "(lossless 4k).mp4" in label:
             return (3, label)
-        return (4, label)
+        if "(lossy 4k).mp4" in label:
+            return (4, label)
+        if item["kind"] == "video":
+            return (5, label)
+        return (6, label)
 
     def _find_primary_video(self, job: LocalJob) -> Optional[Dict[str, str]]:
         mp4_outputs = [

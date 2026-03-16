@@ -443,7 +443,7 @@ class LyricsProcessor:
             generate_plain_text=True,
             generate_lrc=True,
             generate_cdg=False,  # CDG generation disabled (not currently supported)
-            video_resolution="4k",
+            video_resolution="720p" if self.offline else "4k",
             enable_review=not self.skip_transcription_review,  # Honor the caller's setting
             subtitle_offset_ms=self.subtitle_offset_ms,
             add_countdown=False,  # Always defer - caller handles countdown after review

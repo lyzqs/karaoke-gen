@@ -124,3 +124,17 @@ def test_refresh_job_fails_when_mp4_is_not_playable(tmp_path):
     assert job.status == "failed"
     assert job.primary_video_url is None
     assert "playable MP4" in job.error
+
+
+def test_output_sort_key_prefers_720p_deliverable(tmp_path):
+    server = LocalWebUIServer(base_dir=tmp_path)
+    items = [
+        {"kind": "video", "label": "Song (Karaoke).mp4"},
+        {"kind": "video", "label": "Song (Final Karaoke Lossless 4k).mp4"},
+        {"kind": "video", "label": "Song (Final Karaoke Lossy 720p).mp4"},
+    ]
+
+    labels = [item["label"] for item in sorted(items, key=server._output_sort_key)]
+
+    assert labels[0] == "Song (Final Karaoke Lossy 720p).mp4"
+    assert labels[1] == "Song (Karaoke).mp4"

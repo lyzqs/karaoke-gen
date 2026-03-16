@@ -155,6 +155,118 @@ def auto_select_instrumental(track: dict, track_dir: str, logger: logging.Logger
     )
 
 
+def _finalize_offline_track(
+    track: dict,
+    track_dir: str,
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    log_formatter: logging.Formatter,
+    log_level: int,
+    selected_instrumental_file: str,
+    countdown_padding_seconds: float | None,
+    cdg_styles: dict | None,
+) -> dict:
+    """Create the offline 720p karaoke deliverable without title/end screens."""
+    artist = track["artist"]
+    title = track["title"]
+    safe_artist = sanitize_filename(artist)
+    safe_title = sanitize_filename(title)
+    base_name = f"{safe_artist} - {safe_title}"
+
+    with_vocals_candidates = [
+        track.get("with_vocals_video"),
+        f"{base_name} (With Vocals).mkv",
+        f"{base_name} (With Vocals).mp4",
+        f"{base_name} (With Vocals).mov",
+    ]
+    with_vocals_file = next(
+        (
+            resolved
+            for candidate in with_vocals_candidates
+            if candidate
+            for resolved in [_resolve_path_for_cwd(candidate, track_dir)]
+            if os.path.exists(resolved)
+        ),
+        None,
+    )
+    if with_vocals_file is None:
+        raise FileNotFoundError(
+            f"Offline finalisation requires a rendered '(With Vocals)' file for {base_name}"
+        )
+
+    kfinalise = KaraokeFinalise(
+        log_formatter=log_formatter,
+        log_level=log_level,
+        dry_run=args.dry_run,
+        instrumental_format=args.instrumental_format,
+        enable_cdg=args.enable_cdg,
+        enable_txt=args.enable_txt,
+        brand_prefix=args.brand_prefix,
+        organised_dir=args.organised_dir,
+        organised_dir_rclone_root=args.organised_dir_rclone_root,
+        public_share_dir=args.public_share_dir,
+        youtube_client_secrets_file=args.youtube_client_secrets_file,
+        youtube_description_file=args.youtube_description_file,
+        rclone_destination=args.rclone_destination,
+        discord_webhook_url=args.discord_webhook_url,
+        email_template_file=args.email_template_file,
+        cdg_styles=cdg_styles,
+        keep_brand_code=getattr(args, "keep_brand_code", False),
+        non_interactive=args.yes,
+        selected_instrumental_file=selected_instrumental_file,
+        countdown_padding_seconds=countdown_padding_seconds,
+        no_video=False,
+    )
+
+    output_files = kfinalise.prepare_output_filenames(base_name)
+    kfinalise.encode_karaoke_720p_mp4(
+        with_vocals_file=with_vocals_file,
+        instrumental_audio=selected_instrumental_file,
+        output_file=output_files["final_karaoke_lossy_720p_mp4"],
+    )
+
+    input_files = {
+        "instrumental_audio": selected_instrumental_file,
+        "karaoke_lrc": f"{base_name}{kfinalise.suffixes['karaoke_lrc']}",
+    }
+    if args.enable_cdg or args.enable_txt:
+        if not os.path.exists(input_files["karaoke_lrc"]):
+            raise FileNotFoundError(f"Expected karaoke LRC file not found: {input_files['karaoke_lrc']}")
+    if args.enable_cdg:
+        kfinalise.create_cdg_zip_file(input_files, output_files, artist, title)
+    if args.enable_txt:
+        if not args.enable_cdg and not os.path.exists(output_files["karaoke_mp3"]):
+            raise FileNotFoundError(
+                "TXT packaging requires the karaoke MP3 generated during CDG packaging. "
+                "Run with --enable_cdg or disable --enable_txt."
+            )
+        kfinalise.create_txt_zip_file(input_files, output_files)
+
+    result = {
+        "artist": artist,
+        "title": title,
+        "video_with_vocals": with_vocals_file,
+        "video_with_instrumental": output_files["final_karaoke_lossy_720p_mp4"],
+        "final_video": None,
+        "final_video_mkv": None,
+        "final_video_lossy": None,
+        "final_video_720p": output_files["final_karaoke_lossy_720p_mp4"],
+        "youtube_url": None,
+        "brand_code": None,
+        "new_brand_code_dir_path": None,
+        "brand_code_dir_sharing_link": None,
+    }
+    if args.enable_cdg:
+        result["final_karaoke_cdg_zip"] = output_files["final_karaoke_cdg_zip"]
+    if args.enable_txt:
+        result["final_karaoke_txt_zip"] = output_files["final_karaoke_txt_zip"]
+
+    logger.info(
+        "Offline mode uses the lyrics-only 720p karaoke deliverable and skips title/end screen assembly."
+    )
+    return result
+
+
 def run_combined_review(
     track: dict,
     track_dir: str,
@@ -641,6 +753,12 @@ async def async_main():
         log_level = getattr(logging, args.log_level.upper())
         logger.setLevel(log_level)
         logger.info("Running in finalise-only mode...")
+        if args.offline:
+            os.environ["KARAOKE_GEN_SKIP_TITLE_END_SCREENS"] = "1"
+            logger.info(
+                "Offline finalise-only mode enabled: skipping title/end screen assembly "
+                "and targeting a 720p karaoke MP4."
+            )
         
         # Load CDG styles if CDG generation is enabled
         cdg_styles = None
@@ -688,7 +806,38 @@ async def async_main():
         )
         
         try:
-            track = kfinalise.process()
+            if args.offline and not args.no_video:
+                with_vocals_file = kfinalise.find_with_vocals_file()
+                base_name, artist, title = kfinalise.get_names_from_withvocals(with_vocals_file)
+
+                if kfinalise.selected_instrumental_file:
+                    if not os.path.isfile(kfinalise.selected_instrumental_file):
+                        raise Exception(
+                            f"Selected instrumental file not found: {kfinalise.selected_instrumental_file}"
+                        )
+                    selected_instrumental_file = kfinalise.selected_instrumental_file
+                    logger.info(f"Using pre-selected instrumental file: {selected_instrumental_file}")
+                else:
+                    logger.info("No instrumental file pre-selected, searching for instrumental files...")
+                    selected_instrumental_file = kfinalise.choose_instrumental_audio_file(base_name)
+
+                track = _finalize_offline_track(
+                    track={
+                        "artist": artist,
+                        "title": title,
+                        "with_vocals_video": with_vocals_file,
+                    },
+                    track_dir=os.getcwd(),
+                    args=args,
+                    logger=logger,
+                    log_formatter=log_formatter,
+                    log_level=log_level,
+                    selected_instrumental_file=selected_instrumental_file,
+                    countdown_padding_seconds=None,
+                    cdg_styles=cdg_styles,
+                )
+            else:
+                track = kfinalise.process()
             logger.info(f"Successfully completed finalisation for: {track['artist']} - {track['title']}")
             
             # Display summary of outputs
@@ -696,15 +845,22 @@ async def async_main():
             logger.info(f"")
             logger.info(f"Track: {track['artist']} - {track['title']}")
             logger.info(f"")
-            logger.info(f"Working Files:")
-            logger.info(f" Video With Vocals: {track['video_with_vocals']}")
-            logger.info(f" Video With Instrumental: {track['video_with_instrumental']}")
-            logger.info(f"")
-            logger.info(f"Final Videos:")
-            logger.info(f" Lossless 4K MP4 (PCM): {track['final_video']}")
-            logger.info(f" Lossless 4K MKV (FLAC): {track['final_video_mkv']}")
-            logger.info(f" Lossy 4K MP4 (AAC): {track['final_video_lossy']}")
-            logger.info(f" Lossy 720p MP4 (AAC): {track['final_video_720p']}")
+            if args.offline and not args.no_video:
+                logger.info(f"Working Files:")
+                logger.info(f" Video With Vocals: {track['video_with_vocals']}")
+                logger.info(f"")
+                logger.info(f"Final Video:")
+                logger.info(f" 720p Karaoke MP4 (AAC): {track['final_video_720p']}")
+            else:
+                logger.info(f"Working Files:")
+                logger.info(f" Video With Vocals: {track['video_with_vocals']}")
+                logger.info(f" Video With Instrumental: {track['video_with_instrumental']}")
+                logger.info(f"")
+                logger.info(f"Final Videos:")
+                logger.info(f" Lossless 4K MP4 (PCM): {track['final_video']}")
+                logger.info(f" Lossless 4K MKV (FLAC): {track['final_video_mkv']}")
+                logger.info(f" Lossy 4K MP4 (AAC): {track['final_video_lossy']}")
+                logger.info(f" Lossy 720p MP4 (AAC): {track['final_video_720p']}")
 
             if "final_karaoke_cdg_zip" in track or "final_karaoke_txt_zip" in track:
                 logger.info(f"")
@@ -809,6 +965,8 @@ async def async_main():
             logger.error("Offline mode requires a local audio file or folder. URL inputs are not supported.")
             sys.exit(1)
             return
+        os.environ["KARAOKE_GEN_SKIP_TITLE_END_SCREENS"] = "1"
+        logger.info("Offline mode enabled: skipping title/end screen generation for lyrics-only deliverables.")
 
     # Set up environment variables for lyrics-only mode
     if args.lyrics_only:
@@ -1028,7 +1186,7 @@ async def async_main():
                     generate_cdg=False,
                     generate_plain_text=False,
                     generate_lrc=False,
-                    video_resolution="4k",
+                    video_resolution="720p" if args.offline else "4k",
                 )
 
                 output_generator = OutputGenerator(output_config, logger)
@@ -1133,32 +1291,44 @@ async def async_main():
                 sys.exit(1)
                 return # Explicit return for testing
 
-        kfinalise = KaraokeFinalise(
-            log_formatter=log_formatter,
-            log_level=log_level,
-            dry_run=args.dry_run,
-            instrumental_format=args.instrumental_format,
-            enable_cdg=args.enable_cdg,
-            enable_txt=args.enable_txt,
-            brand_prefix=args.brand_prefix,
-            organised_dir=args.organised_dir,
-            organised_dir_rclone_root=args.organised_dir_rclone_root,
-            public_share_dir=args.public_share_dir,
-            youtube_client_secrets_file=args.youtube_client_secrets_file,
-            youtube_description_file=args.youtube_description_file,
-            rclone_destination=args.rclone_destination,
-            discord_webhook_url=args.discord_webhook_url,
-            email_template_file=args.email_template_file,
-            cdg_styles=cdg_styles,
-            keep_brand_code=getattr(args, 'keep_brand_code', False),
-            non_interactive=args.yes,
-            selected_instrumental_file=selected_instrumental_file,
-            countdown_padding_seconds=countdown_padding_seconds,
-            no_video=args.no_video,
-        )
-
         try:
-            final_track = kfinalise.process()
+            if args.offline and not args.no_video:
+                final_track = _finalize_offline_track(
+                    track=track,
+                    track_dir=track_dir,
+                    args=args,
+                    logger=logger,
+                    log_formatter=log_formatter,
+                    log_level=log_level,
+                    selected_instrumental_file=selected_instrumental_file,
+                    countdown_padding_seconds=countdown_padding_seconds,
+                    cdg_styles=cdg_styles,
+                )
+            else:
+                kfinalise = KaraokeFinalise(
+                    log_formatter=log_formatter,
+                    log_level=log_level,
+                    dry_run=args.dry_run,
+                    instrumental_format=args.instrumental_format,
+                    enable_cdg=args.enable_cdg,
+                    enable_txt=args.enable_txt,
+                    brand_prefix=args.brand_prefix,
+                    organised_dir=args.organised_dir,
+                    organised_dir_rclone_root=args.organised_dir_rclone_root,
+                    public_share_dir=args.public_share_dir,
+                    youtube_client_secrets_file=args.youtube_client_secrets_file,
+                    youtube_description_file=args.youtube_description_file,
+                    rclone_destination=args.rclone_destination,
+                    discord_webhook_url=args.discord_webhook_url,
+                    email_template_file=args.email_template_file,
+                    cdg_styles=cdg_styles,
+                    keep_brand_code=getattr(args, 'keep_brand_code', False),
+                    non_interactive=args.yes,
+                    selected_instrumental_file=selected_instrumental_file,
+                    countdown_padding_seconds=countdown_padding_seconds,
+                    no_video=args.no_video,
+                )
+                final_track = kfinalise.process()
             logger.info(f"Successfully completed processing: {final_track['artist']} - {final_track['title']}")
             
             # Display summary of outputs
@@ -1168,15 +1338,22 @@ async def async_main():
             logger.info(f"")
 
             if not args.no_video:
-                logger.info(f"Working Files:")
-                logger.info(f" Video With Vocals: {final_track['video_with_vocals']}")
-                logger.info(f" Video With Instrumental: {final_track['video_with_instrumental']}")
-                logger.info(f"")
-                logger.info(f"Final Videos:")
-                logger.info(f" Lossless 4K MP4 (PCM): {final_track['final_video']}")
-                logger.info(f" Lossless 4K MKV (FLAC): {final_track['final_video_mkv']}")
-                logger.info(f" Lossy 4K MP4 (AAC): {final_track['final_video_lossy']}")
-                logger.info(f" Lossy 720p MP4 (AAC): {final_track['final_video_720p']}")
+                if args.offline:
+                    logger.info(f"Working Files:")
+                    logger.info(f" Video With Vocals: {final_track['video_with_vocals']}")
+                    logger.info(f"")
+                    logger.info(f"Final Video:")
+                    logger.info(f" 720p Karaoke MP4 (AAC): {final_track['final_video_720p']}")
+                else:
+                    logger.info(f"Working Files:")
+                    logger.info(f" Video With Vocals: {final_track['video_with_vocals']}")
+                    logger.info(f" Video With Instrumental: {final_track['video_with_instrumental']}")
+                    logger.info(f"")
+                    logger.info(f"Final Videos:")
+                    logger.info(f" Lossless 4K MP4 (PCM): {final_track['final_video']}")
+                    logger.info(f" Lossless 4K MKV (FLAC): {final_track['final_video_mkv']}")
+                    logger.info(f" Lossy 4K MP4 (AAC): {final_track['final_video_lossy']}")
+                    logger.info(f" Lossy 720p MP4 (AAC): {final_track['final_video_720p']}")
 
             if "final_karaoke_cdg_zip" in final_track or "final_karaoke_txt_zip" in final_track:
                 logger.info(f"")

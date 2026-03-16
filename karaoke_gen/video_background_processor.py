@@ -11,16 +11,18 @@ class VideoBackgroundProcessor:
     Responsible for scaling, looping/trimming, darkening, and subtitle rendering.
     """
 
-    def __init__(self, logger, ffmpeg_base_command):
+    def __init__(self, logger, ffmpeg_base_command, target_resolution=(3840, 2160)):
         """
         Initialize the VideoBackgroundProcessor.
 
         Args:
             logger: Logger instance for output
             ffmpeg_base_command: Base ffmpeg command with common flags
+            target_resolution: Output resolution as (width, height)
         """
         self.logger = logger
         self.ffmpeg_base_command = ffmpeg_base_command
+        self.target_resolution = target_resolution
 
         # Detect and configure hardware acceleration
         self.nvenc_available = self.detect_nvenc_support()
@@ -185,10 +187,14 @@ class VideoBackgroundProcessor:
         """
         filters = []
 
-        # Scale to 4K with intelligent cropping (not stretching)
+        width, height = self.target_resolution
+
+        # Scale to the target frame with intelligent cropping (not stretching).
         # force_original_aspect_ratio=increase ensures we scale up to fill the frame
-        # then crop to exact 4K dimensions
-        filters.append("scale=w=3840:h=2160:force_original_aspect_ratio=increase,crop=3840:2160")
+        # then crop to the exact target dimensions.
+        filters.append(
+            f"scale=w={width}:h={height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+        )
 
         # Add darkening overlay if requested (before ASS subtitles)
         if darkness_percent > 0:
@@ -353,4 +359,3 @@ class VideoBackgroundProcessor:
 
         self.logger.info(f"✓ Video background processing complete: {output_path}")
         return output_path
-

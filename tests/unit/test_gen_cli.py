@@ -262,6 +262,106 @@ async def test_offline_mode_rejects_artist_title_search(
     mock_exit.assert_called_once_with(1)
     mock_kprep_class.assert_not_called()
 
+
+@patch("karaoke_gen.utils.gen_cli.KaraokeFinalise")
+def test_finalize_offline_track_uses_720p_delivery(mock_kfinalise, mock_base_args, mock_logger):
+    """Offline finalisation should produce the 720p deliverable without full 4k process()."""
+    track = {
+        "artist": "Test Artist",
+        "title": "Test Title",
+        "with_vocals_video": "./Test Artist - Test Title (With Vocals).mkv",
+    }
+    mock_instance = mock_kfinalise.return_value
+    mock_instance.prepare_output_filenames.return_value = {
+        "final_karaoke_lossy_720p_mp4": "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+        "karaoke_mp3": "Test Artist - Test Title (Karaoke).mp3",
+    }
+    mock_base_args.enable_cdg = False
+    mock_base_args.enable_txt = False
+
+    with patch(
+        "karaoke_gen.utils.gen_cli.os.path.exists",
+        side_effect=lambda path: path in {
+            "./Test Artist - Test Title (With Vocals).mkv",
+            "Test Artist - Test Title (Karaoke).lrc",
+        },
+    ):
+        result = gen_cli._finalize_offline_track(
+            track=track,
+            track_dir=".",
+            args=mock_base_args,
+            logger=mock_logger,
+            log_formatter=logging.Formatter("%(message)s"),
+            log_level=logging.INFO,
+            selected_instrumental_file="instrumental.flac",
+            countdown_padding_seconds=3.0,
+            cdg_styles=None,
+        )
+
+    mock_kfinalise.assert_called_once()
+    mock_instance.encode_karaoke_720p_mp4.assert_called_once_with(
+        with_vocals_file="./Test Artist - Test Title (With Vocals).mkv",
+        instrumental_audio="instrumental.flac",
+        output_file="Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+    )
+    mock_instance.process.assert_not_called()
+    assert result["final_video"] is None
+    assert result["final_video_720p"].endswith("(Final Karaoke Lossy 720p).mp4")
+
+
+@patch("karaoke_gen.utils.gen_cli._finalize_offline_track")
+@patch("karaoke_gen.utils.gen_cli.auto_select_instrumental", return_value="selected_instrumental.flac")
+@patch("karaoke_gen.utils.gen_cli.KaraokePrep")
+@patch("karaoke_gen.utils.gen_cli.is_file", return_value=True)
+@patch("karaoke_gen.utils.gen_cli.is_url", return_value=False)
+async def test_offline_full_flow_uses_simple_720p_finalisation(
+    mock_isurl,
+    mock_isfile,
+    mock_kprep_class,
+    mock_auto_select,
+    mock_finalize_offline,
+    mock_base_args,
+):
+    """Offline full flow should bypass KaraokeFinalise.process() and use the simple 720p branch."""
+    mock_base_args.args = ["/path/to/song.flac", "Test Artist", "Test Title"]
+    mock_base_args.offline = True
+    mock_base_args.skip_transcription_review = True
+    mock_base_args.skip_instrumental_review = True
+    mock_base_args.yes = True
+
+    track = {
+        **MOCK_PREP_TRACK,
+        "track_output_dir": "/fake/output/Test Artist - Test Title",
+        "with_vocals_video": "/fake/output/Test Artist - Test Title/Test Artist - Test Title (With Vocals).mkv",
+    }
+    mock_kprep_instance = MagicMock()
+    mock_kprep_class.return_value = mock_kprep_instance
+    mock_kprep_instance.process = AsyncMock(return_value=[track])
+    mock_finalize_offline.return_value = {
+        "artist": "Test Artist",
+        "title": "Test Title",
+        "video_with_vocals": track["with_vocals_video"],
+        "video_with_instrumental": "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+        "final_video": None,
+        "final_video_mkv": None,
+        "final_video_lossy": None,
+        "final_video_720p": "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+        "youtube_url": None,
+        "brand_code": None,
+        "new_brand_code_dir_path": None,
+        "brand_code_dir_sharing_link": None,
+    }
+
+    with patch("karaoke_gen.utils.gen_cli.argparse.ArgumentParser") as mock_parser, \
+         patch("karaoke_gen.utils.gen_cli.os.path.exists", return_value=True), \
+         patch("karaoke_gen.utils.gen_cli.os.chdir"):
+        mock_parser.return_value.parse_args.return_value = mock_base_args
+        await gen_cli.async_main()
+
+    mock_kprep_instance.process.assert_awaited_once()
+    mock_auto_select.assert_called_once()
+    mock_finalize_offline.assert_called_once()
+
 @patch("karaoke_gen.utils.gen_cli.is_url", return_value=False)
 @patch("karaoke_gen.utils.gen_cli.is_file", return_value=False)
 @patch("karaoke_gen.utils.gen_cli.os.path.isdir", return_value=True)
@@ -346,6 +446,58 @@ async def test_workflow_finalise_only(mock_run_review, mock_open, mock_kfinalise
     mock_kfinalise_instance.process.assert_called_once()
     # Just verify that we do log something
     assert mock_logger.info.called
+
+
+@patch("karaoke_gen.utils.gen_cli.KaraokePrep") # Should not be called
+@patch("karaoke_gen.utils.gen_cli.KaraokeFinalise")
+@patch("karaoke_gen.utils.gen_cli._finalize_offline_track")
+async def test_workflow_finalise_only_offline_uses_simple_720p_finalisation(
+    mock_finalize_offline,
+    mock_kfinalise,
+    mock_kprep,
+    mock_base_args,
+    mock_logger,
+):
+    """Test --finalise-only --offline workflow uses the simplified 720p finaliser."""
+    mock_base_args.finalise_only = True
+    mock_base_args.offline = True
+    mock_kfinalise_instance = mock_kfinalise.return_value
+    mock_kfinalise_instance.selected_instrumental_file = None
+    mock_kfinalise_instance.find_with_vocals_file.return_value = "./Test Artist - Test Title (With Vocals).mkv"
+    mock_kfinalise_instance.get_names_from_withvocals.return_value = (
+        "Test Artist - Test Title",
+        "Test Artist",
+        "Test Title",
+    )
+    mock_kfinalise_instance.choose_instrumental_audio_file.return_value = "selected_instrumental.flac"
+    mock_finalize_offline.return_value = {
+        "artist": "Test Artist",
+        "title": "Test Title",
+        "video_with_vocals": "./Test Artist - Test Title (With Vocals).mkv",
+        "video_with_instrumental": "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+        "final_video": None,
+        "final_video_mkv": None,
+        "final_video_lossy": None,
+        "final_video_720p": "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+        "youtube_url": None,
+        "brand_code": None,
+        "new_brand_code_dir_path": None,
+        "brand_code_dir_sharing_link": None,
+    }
+
+    with patch("karaoke_gen.utils.gen_cli.argparse.ArgumentParser") as mock_parser, \
+         patch("karaoke_gen.utils.gen_cli.logging.getLogger", return_value=mock_logger), \
+         patch.dict(os.environ, {}, clear=False):
+        mock_parser.return_value.parse_args.return_value = mock_base_args
+        await gen_cli.async_main()
+        assert os.environ["KARAOKE_GEN_SKIP_TITLE_END_SCREENS"] == "1"
+
+    mock_kprep.assert_not_called()
+    mock_kfinalise.assert_called_once()
+    mock_kfinalise_instance.process.assert_not_called()
+    mock_kfinalise_instance.find_with_vocals_file.assert_called_once()
+    mock_kfinalise_instance.choose_instrumental_audio_file.assert_called_once_with("Test Artist - Test Title")
+    mock_finalize_offline.assert_called_once()
 
 
 @patch("karaoke_gen.utils.gen_cli.KaraokePrep") # Use default MagicMock for class

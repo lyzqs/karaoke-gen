@@ -298,6 +298,7 @@ class TestLyrics:
         assert lyrics_config.rapidapi_key is None
         assert lyrics_config.disable_online_sources is True
         assert output_config.fetch_lyrics is False
+        assert output_config.video_resolution == "720p"
     
     def test_backup_existing_outputs(self, basic_karaoke_gen, temp_dir):
         """Test backing up existing outputs."""

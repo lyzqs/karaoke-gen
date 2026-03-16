@@ -222,6 +222,7 @@ class KaraokePrep:
             self.video_background_processor = VideoBackgroundProcessor(
                 logger=self.logger,
                 ffmpeg_base_command=self.ffmpeg_base_command,
+                target_resolution=(1280, 720) if self.offline else (3840, 2160),
             )
         else:
             self.video_background_processor = None
@@ -790,7 +791,7 @@ class KaraokePrep:
                         generate_cdg=False,
                         generate_plain_text=True,
                         generate_lrc=True,
-                        video_resolution="4k",
+                        video_resolution="720p" if self.offline else "4k",
                         subtitle_offset_ms=self.subtitle_offset_ms,
                     )
 

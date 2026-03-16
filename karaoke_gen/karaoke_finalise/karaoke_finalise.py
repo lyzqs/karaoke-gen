@@ -949,6 +949,45 @@ class KaraokeFinalise:
         
         self.execute_command_with_fallback(gpu_command, cpu_command, "Encoding 720p version of the final video")
 
+    def encode_karaoke_720p_mp4(self, with_vocals_file, instrumental_audio, output_file):
+        """Create a 720p AAC karaoke MP4 without title/end screens."""
+        actual_instrumental = instrumental_audio
+        if self.countdown_padding_seconds and self.countdown_padding_seconds > 0:
+            if "(Padded)" not in instrumental_audio:
+                self.logger.warning(
+                    f"Countdown padding ({self.countdown_padding_seconds}s) was applied to vocals, "
+                    f"but instrumental doesn't appear to be padded. Creating padded version..."
+                )
+                base, ext = os.path.splitext(instrumental_audio)
+                padded_instrumental = f"{base} (Padded){ext}"
+
+                if not os.path.exists(padded_instrumental):
+                    self._pad_audio_file(instrumental_audio, padded_instrumental, self.countdown_padding_seconds)
+                    self.logger.info(f"Created padded instrumental: {padded_instrumental}")
+
+                actual_instrumental = padded_instrumental
+            else:
+                self.logger.info(f"Using already-padded instrumental: {instrumental_audio}")
+
+        gpu_command = (
+            f'{self.ffmpeg_base_command} {self.hwaccel_decode_flags} -i "{with_vocals_file}" '
+            f'-i "{actual_instrumental}" -map 0:v:0 -map 1:a:0 '
+            f'-c:v {self.video_encoder} -vf "{self.scale_filter}=1280:720" '
+            f'{self.get_nvenc_quality_settings("medium")} -b:v 2000k '
+            f'-c:a {self.aac_codec} -ar 48000 -b:a 128k -shortest '
+            f'{self.mp4_flags} "{output_file}"'
+        )
+
+        cpu_command = (
+            f'{self.ffmpeg_base_command} -i "{with_vocals_file}" -i "{actual_instrumental}" '
+            f'-map 0:v:0 -map 1:a:0 -c:v libx264 -vf "scale=1280:720" '
+            f'-b:v 2000k -preset medium -tune animation '
+            f'-c:a {self.aac_codec} -ar 48000 -b:a 128k -shortest '
+            f'{self.mp4_flags} "{output_file}"'
+        )
+
+        self.execute_command_with_fallback(gpu_command, cpu_command, "Encoding 720p karaoke deliverable")
+
     def prepare_concat_filter(self, input_files):
         """Prepare the concat filter and additional input for end credits if present"""
         env_mov_input = ""
