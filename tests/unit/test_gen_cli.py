@@ -264,8 +264,8 @@ async def test_offline_mode_rejects_artist_title_search(
 
 
 @patch("karaoke_gen.utils.gen_cli.KaraokeFinalise")
-def test_finalize_offline_track_uses_720p_delivery(mock_kfinalise, mock_base_args, mock_logger):
-    """Offline finalisation should produce the 720p deliverable without full 4k process()."""
+def test_finalize_offline_track_defaults_to_with_vocals_720p_delivery(mock_kfinalise, mock_base_args, mock_logger):
+    """Offline finalisation should default to the 720p with-vocals deliverable and keep instrumental video secondary."""
     track = {
         "artist": "Test Artist",
         "title": "Test Title",
@@ -299,14 +299,19 @@ def test_finalize_offline_track_uses_720p_delivery(mock_kfinalise, mock_base_arg
         )
 
     mock_kfinalise.assert_called_once()
+    mock_instance.encode_with_vocals_720p_mp4.assert_called_once_with(
+        with_vocals_file="./Test Artist - Test Title (With Vocals).mkv",
+        output_file="Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+    )
     mock_instance.encode_karaoke_720p_mp4.assert_called_once_with(
         with_vocals_file="./Test Artist - Test Title (With Vocals).mkv",
         instrumental_audio="instrumental.flac",
-        output_file="Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+        output_file="Test Artist - Test Title (Karaoke).mp4",
     )
     mock_instance.process.assert_not_called()
     assert result["final_video"] is None
     assert result["final_video_720p"].endswith("(Final Karaoke Lossy 720p).mp4")
+    assert result["video_with_instrumental"].endswith("(Karaoke).mp4")
 
 
 @patch("karaoke_gen.utils.gen_cli._finalize_offline_track")
@@ -341,7 +346,7 @@ async def test_offline_full_flow_uses_simple_720p_finalisation(
         "artist": "Test Artist",
         "title": "Test Title",
         "video_with_vocals": track["with_vocals_video"],
-        "video_with_instrumental": "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+        "video_with_instrumental": "Test Artist - Test Title (Karaoke).mp4",
         "final_video": None,
         "final_video_mkv": None,
         "final_video_lossy": None,
@@ -474,7 +479,7 @@ async def test_workflow_finalise_only_offline_uses_simple_720p_finalisation(
         "artist": "Test Artist",
         "title": "Test Title",
         "video_with_vocals": "./Test Artist - Test Title (With Vocals).mkv",
-        "video_with_instrumental": "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+        "video_with_instrumental": "Test Artist - Test Title (Karaoke).mp4",
         "final_video": None,
         "final_video_mkv": None,
         "final_video_lossy": None,

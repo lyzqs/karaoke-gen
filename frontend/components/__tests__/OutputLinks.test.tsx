@@ -73,11 +73,11 @@ describe('OutputLinks', () => {
     it('shows download buttons when file_urls are present', () => {
       render(<OutputLinks job={baseJob} />)
 
-      expect(screen.getByText('4K Video')).toBeInTheDocument()
       expect(screen.getByText('720p Video')).toBeInTheDocument()
       expect(screen.getByText('With Vocals')).toBeInTheDocument()
       expect(screen.getByText('CDG')).toBeInTheDocument()
       expect(screen.getByText('TXT')).toBeInTheDocument()
+      expect(screen.queryByText('4K Video')).not.toBeInTheDocument()
     })
 
     it('shows YouTube link when youtube_url is in state_data', () => {
@@ -103,11 +103,11 @@ describe('OutputLinks', () => {
     it('hides all download buttons', () => {
       render(<OutputLinks job={deletedJob} />)
 
-      expect(screen.queryByText('4K Video')).not.toBeInTheDocument()
       expect(screen.queryByText('720p Video')).not.toBeInTheDocument()
       expect(screen.queryByText('With Vocals')).not.toBeInTheDocument()
       expect(screen.queryByText('CDG')).not.toBeInTheDocument()
       expect(screen.queryByText('TXT')).not.toBeInTheDocument()
+      expect(screen.queryByText('4K Video')).not.toBeInTheDocument()
     })
 
     it('hides YouTube link', () => {

@@ -26,9 +26,8 @@ class PositionCalculator:
 
     @staticmethod
     def calculate_first_line_position(config: ScreenConfig) -> int:
-        """Calculate vertical position of first line."""
-        total_height = config.max_visible_lines * config.line_height
-        return config.top_padding + (config.video_height - total_height - config.top_padding) // 4
+        """Calculate vertical position of the upper lower-third lyric line."""
+        return config.video_height - config.get_bottom_padding_pixels() - ((config.max_visible_lines - 1) * config.line_height)
 
     @staticmethod
     def calculate_line_positions(config: ScreenConfig) -> List[int]:
@@ -215,7 +214,12 @@ class LyricsScreen:
             y_position = positions[i]
 
             # Create line state
-            line_state = LineState(text=line.segment.text, timing=timing, y_position=y_position)
+            line_state = LineState(
+                text=line.segment.text,
+                timing=timing,
+                y_position=y_position,
+                line_index=i,
+            )
 
             # Create ASS events with previous end time info
             # fmt: off

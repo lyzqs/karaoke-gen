@@ -10,7 +10,7 @@ from karaoke_gen.lyrics_transcriber.types import LyricsSegment, Word
 from karaoke_gen.lyrics_transcriber.output.ass import LyricsScreen, LyricsLine
 from karaoke_gen.lyrics_transcriber.output.ass.ass import ASS
 from karaoke_gen.lyrics_transcriber.output.ass.style import Style
-from karaoke_gen.lyrics_transcriber.output.ass.constants import ALIGN_TOP_CENTER
+from karaoke_gen.lyrics_transcriber.output.ass.constants import ALIGN_BOTTOM_CENTER
 from karaoke_gen.lyrics_transcriber.output.ass import LyricsScreen
 from karaoke_gen.lyrics_transcriber.output.ass.section_detector import SectionDetector
 from karaoke_gen.lyrics_transcriber.output.ass.config import ScreenConfig
@@ -74,6 +74,10 @@ class SubtitlesGenerator:
             "lead_in_gap_threshold",
             "lead_in_horiz_offset_percent",
             "lead_in_vert_offset_percent",
+            "bottom_padding_percent",
+            "line_left_padding_percent",
+            "line_right_padding_percent",
+            "show_section_markers",
         ]
         
         for prop in screen_config_props:
@@ -276,8 +280,11 @@ class SubtitlesGenerator:
         self, section_screens: List[SectionScreen], lyric_screens: List[LyricsScreen]
     ) -> List[Union[SectionScreen, LyricsScreen]]:
         """Merge section and lyric screens in chronological order."""
-        # Sort all screens by start time
-        return sorted(section_screens + lyric_screens, key=lambda s: s.start_ts)
+        screens_to_render = lyric_screens
+        if self.config.show_section_markers:
+            screens_to_render = section_screens + lyric_screens
+
+        return sorted(screens_to_render, key=lambda s: s.start_ts)
 
     def _log_final_screens(self, screens: List[Union[SectionScreen, LyricsScreen]]) -> None:
         """Log details of all final screens."""
@@ -336,7 +343,7 @@ class SubtitlesGenerator:
         style.Fontpath = font_path
         style.Fontsize = fontsize
 
-        style.Alignment = ALIGN_TOP_CENTER
+        style.Alignment = ALIGN_BOTTOM_CENTER
 
         # Convert color strings to tuples of integers
         def parse_color(color_str):

@@ -183,6 +183,24 @@ class TestLocalEncodingServiceEncodingMethods:
         assert result is True
         mock_execute.assert_called_once()
 
+    @patch.object(LocalEncodingService, "_execute_command")
+    def test_prepare_with_vocals_mp4_copies_existing_mp4(self, mock_execute):
+        """MP4 inputs should still produce a dedicated with-vocals MP4."""
+        mock_execute.return_value = True
+
+        service = LocalEncodingService()
+        result = service.prepare_with_vocals_mp4(
+            "/input/video.mp4",
+            "/output/with_vocals.mp4"
+        )
+
+        assert result is True
+        mock_execute.assert_called_once()
+        call_args = mock_execute.call_args[0][0]
+        assert '-c copy' in call_args
+        assert "/input/video.mp4" in call_args
+        assert "/output/with_vocals.mp4" in call_args
+
     @patch.object(LocalEncodingService, "_execute_command_with_fallback")
     def test_encode_lossless_mp4_without_end(self, mock_execute):
         """Test lossless 4K MP4 encoding without end credits."""
@@ -275,17 +293,17 @@ class TestLocalEncodingServiceFullPipeline:
     """Test full encoding pipeline."""
 
     @patch.object(LocalEncodingService, "remux_with_instrumental")
-    @patch.object(LocalEncodingService, "convert_mov_to_mp4")
+    @patch.object(LocalEncodingService, "prepare_with_vocals_mp4")
     @patch.object(LocalEncodingService, "encode_lossless_mp4")
     @patch.object(LocalEncodingService, "encode_lossy_mp4")
     @patch.object(LocalEncodingService, "encode_lossless_mkv")
     @patch.object(LocalEncodingService, "encode_720p")
     def test_encode_all_formats_success(
-        self, mock_720p, mock_mkv, mock_lossy, mock_lossless, mock_convert, mock_remux
+        self, mock_720p, mock_mkv, mock_lossy, mock_lossless, mock_prepare_with_vocals, mock_remux
     ):
         """Test successful full encoding pipeline."""
         mock_remux.return_value = True
-        mock_convert.return_value = True
+        mock_prepare_with_vocals.return_value = True
         mock_lossless.return_value = True
         mock_lossy.return_value = True
         mock_mkv.return_value = True
@@ -308,8 +326,15 @@ class TestLocalEncodingServiceFullPipeline:
 
         assert result.success is True
         assert "karaoke_mp4" in result.output_files
+        assert "with_vocals_mp4" in result.output_files
         assert "lossless_4k_mp4" in result.output_files
         assert "720p_mp4" in result.output_files
+        mock_lossless.assert_called_once_with(
+            "/input/title.mov",
+            "/output/with_vocals.mp4",
+            "/output/lossless_4k.mp4",
+            None,
+        )
 
     @patch.object(LocalEncodingService, "remux_with_instrumental")
     def test_encode_all_formats_failure_early(self, mock_remux):
@@ -329,6 +354,25 @@ class TestLocalEncodingServiceFullPipeline:
 
         assert result.success is False
         assert "Failed to remux" in result.error
+
+    @patch.object(LocalEncodingService, "prepare_with_vocals_mp4")
+    def test_encode_all_formats_fails_when_with_vocals_preparation_fails(self, mock_prepare_with_vocals):
+        """Final encoding must stop if the with-vocals primary output cannot be prepared."""
+        mock_prepare_with_vocals.return_value = False
+
+        service = LocalEncodingService()
+        config = EncodingConfig(
+            title_video="/input/title.mov",
+            karaoke_video="/input/karaoke.mov",
+            instrumental_audio="/input/instrumental.flac",
+            output_with_vocals_mp4="/output/with_vocals.mp4",
+            output_lossless_4k_mp4="/output/lossless_4k.mp4",
+        )
+
+        result = service.encode_all_formats(config)
+
+        assert result.success is False
+        assert result.error == "Failed to prepare with-vocals MP4"
 
     def test_encode_all_formats_dry_run(self):
         """Test encoding pipeline in dry run mode."""

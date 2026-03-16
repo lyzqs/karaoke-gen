@@ -4,13 +4,16 @@ import logging
 from datetime import timedelta
 from PIL import Image, ImageDraw, ImageFont
 import os
+import subprocess
 
 from karaoke_gen.lyrics_transcriber.ruby import ResolvedRubyAnnotation
 from karaoke_gen.lyrics_transcriber.types import LyricsSegment
 from karaoke_gen.lyrics_transcriber.output.ass.event import Event
 from karaoke_gen.lyrics_transcriber.output.ass.style import Style
 from karaoke_gen.lyrics_transcriber.output.ass.config import LineState, ScreenConfig
+from karaoke_gen.lyrics_transcriber.output.ass.constants import ALIGN_TOP_LEFT, ALIGN_TOP_RIGHT
 from karaoke_gen.lyrics_transcriber.output.ass.formatters import Formatters
+from karaoke_gen.video_generator import _find_cjk_font, _text_needs_cjk_font
 
 
 @dataclass
@@ -29,8 +32,47 @@ class LyricsLine:
             self.logger = logging.getLogger(__name__)
         if self.ruby_annotations is None:
             self.ruby_annotations = []
+        self._font_path_cache = {}
 
-    def _get_font(self, style: Style, font_size: Optional[int] = None) -> ImageFont.FreeTypeFont:
+    def _resolve_font_path(self, style: Style, sample_text: str = "") -> Optional[str]:
+        """Resolve a usable font path for text measurement."""
+        cache_key = (style.Fontpath, style.Fontname, _text_needs_cjk_font(sample_text))
+        if cache_key in self._font_path_cache:
+            return self._font_path_cache[cache_key]
+
+        candidates: List[str] = []
+        if style.Fontpath and os.path.exists(style.Fontpath):
+            candidates.append(style.Fontpath)
+
+        if _text_needs_cjk_font(sample_text):
+            cjk_font = _find_cjk_font()
+            if cjk_font:
+                candidates.append(cjk_font)
+
+        if style.Fontname:
+            try:
+                result = subprocess.run(
+                    ["fc-match", "--format=%{file}", style.Fontname],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                font_path = result.stdout.strip()
+                if result.returncode == 0 and font_path and os.path.exists(font_path):
+                    candidates.append(font_path)
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+
+        font_path = next((path for path in candidates if path and os.path.exists(path)), None)
+        self._font_path_cache[cache_key] = font_path
+        return font_path
+
+    def _get_font(
+        self,
+        style: Style,
+        font_size: Optional[int] = None,
+        sample_text: str = "",
+    ) -> ImageFont.FreeTypeFont:
         """Get the font for text measurements."""
         # ASS renders fonts about 70% of their actual size
         ASS_FONT_SCALE = 0.70
@@ -40,11 +82,11 @@ class LyricsLine:
         adjusted_size = max(int(base_font_size * ASS_FONT_SCALE), 1)
         self.logger.debug(f"Adjusting font size from {style.Fontsize} to {adjusted_size} to match ASS rendering")
 
+        font_path = self._resolve_font_path(style, sample_text)
         try:
-            # Use the Fontpath property from Style class
-            if style.Fontpath and os.path.exists(style.Fontpath):
-                return ImageFont.truetype(style.Fontpath, size=adjusted_size)
-            self.logger.warning(f"Could not load font {style.Fontpath}, using default")
+            if font_path:
+                return ImageFont.truetype(font_path, size=adjusted_size)
+            self.logger.warning(f"Could not resolve a font path for '{style.Fontname}', using default")
             return ImageFont.load_default()
         except (OSError, AttributeError) as e:
             self.logger.warning(f"Font error ({e}), using default")
@@ -67,21 +109,40 @@ class LyricsLine:
 
     def _get_ruby_font_size(self, style: Style) -> int:
         """Return a smaller font size for ruby annotations."""
-        return max(int(style.Fontsize * 0.28), 12)
+        return max(int(style.Fontsize * 0.32), 14)
 
     def _get_ruby_gap(self, style: Style) -> int:
         """Return the vertical gap between ruby text and the base lyric line."""
-        return max(int(style.Fontsize * 0.05), 6)
+        return max(int(style.Fontsize * 0.08), 8)
+
+    def _get_line_layout(
+        self,
+        state: LineState,
+        style: Style,
+        config: ScreenConfig,
+    ) -> Tuple[str, ImageFont.FreeTypeFont, int, int, int, int, int]:
+        """Return layout data for the current lyric line."""
+        transformed_line = self._apply_case_transform(self.segment.text)
+        line_font = self._get_font(style, sample_text=transformed_line)
+        line_width, line_height = self._get_text_dimensions(transformed_line, line_font)
+
+        if state.line_index % 2 == 0:
+            alignment = ALIGN_TOP_LEFT
+            anchor_x = config.get_left_padding_pixels()
+            line_left = anchor_x
+        else:
+            alignment = ALIGN_TOP_RIGHT
+            anchor_x = config.video_width - config.get_right_padding_pixels()
+            line_left = anchor_x - line_width
+
+        return transformed_line, line_font, line_width, line_height, alignment, anchor_x, line_left
 
     def _create_ruby_events(self, state: LineState, style: Style, config: ScreenConfig) -> List[Event]:
         """Create ruby/furigana overlay events for the current line."""
         if not self.ruby_annotations:
             return []
 
-        transformed_line = self._apply_case_transform(self.segment.text)
-        line_font = self._get_font(style)
-        line_width, _ = self._get_text_dimensions(transformed_line, line_font)
-        line_left = int(round((config.video_width - line_width) / 2))
+        _, line_font, _, _, _, _, line_left = self._get_line_layout(state, style, config)
 
         ruby_font_size = self._get_ruby_font_size(style)
         ruby_gap = self._get_ruby_gap(style)
@@ -170,31 +231,24 @@ class LyricsLine:
         self.logger.debug(f"  Fade out starts at: {fade_out_start:.2f}s")
         self.logger.debug(f"  Rectangle reaches final position at: {line_start:.2f}s")
         self.logger.debug(f"  Rectangle fully faded out at: {fade_out_end:.2f}s")
-        
+
         # Calculate dimensions and positions using configurable percentages
-        font = self._get_font(style)
-        # Apply case transformation to match the actual rendered text
-        main_text = self._apply_case_transform(self.segment.text)
-        main_width, main_height = self._get_text_dimensions(main_text, font)
+        _, font, _, main_height, _, _, line_left = self._get_line_layout(state, style, config)
         rect_width = int(self.screen_config.video_width * (config.lead_in_width_percent / 100))
         rect_height = int(self.screen_config.video_height * (config.lead_in_height_percent / 100))
-        # Calculate where the left edge of the centered text will be
-        text_left = self.screen_config.video_width//2 - main_width//2
         # Apply horizontal offset if configured
         horizontal_offset = int(self.screen_config.video_width * (config.lead_in_horiz_offset_percent / 100))
-        final_x_position = text_left + horizontal_offset
+        final_x_position = line_left + horizontal_offset
         # Apply vertical offset if configured
         vertical_offset = int(self.screen_config.video_height * (config.lead_in_vert_offset_percent / 100))
         final_y_position = state.y_position + main_height + vertical_offset
-        
+
         self.logger.debug(f"Position calculations:")
         self.logger.debug(f"  Video dimensions: {self.screen_config.video_width}x{self.screen_config.video_height}")
         self.logger.debug(f"  Original text: '{self.segment.text}'")
-        self.logger.debug(f"  Transformed text: '{main_text}'")
-        self.logger.debug(f"  Main text width: {main_width}px")
         self.logger.debug(f"  Main text height: {main_height}px")
         self.logger.debug(f"  Rectangle dimensions: {rect_width}x{rect_height}px (from {config.lead_in_width_percent}% x {config.lead_in_height_percent}%)")
-        self.logger.debug(f"  Text left edge: {text_left}px")
+        self.logger.debug(f"  Text left edge: {line_left}px")
         self.logger.debug(f"  Horizontal offset: {horizontal_offset}px ({config.lead_in_horiz_offset_percent}% of screen width)")
         self.logger.debug(f"  Final X position: {final_x_position}px")
         self.logger.debug(f"  Vertical offset: {vertical_offset}px ({config.lead_in_vert_offset_percent}% of screen height)")
@@ -261,12 +315,11 @@ class LyricsLine:
         main_event.Start = state.timing.fade_in_time
         main_event.End = state.timing.end_time
 
-        # Use absolute positioning
-        x_pos = config.video_width // 2  # Center horizontally
+        _, _, _, _, alignment, anchor_x, _ = self._get_line_layout(state, style, config)
 
         # Main lyrics text with positioning and fade
         text = (
-            f"{{\\an8}}{{\\pos({x_pos},{state.y_position})}}"
+            f"{{\\an{alignment}}}{{\\pos({anchor_x},{state.y_position})}}"
             f"{{\\fad({config.fade_in_ms},{config.fade_out_ms})}}"
         )
 

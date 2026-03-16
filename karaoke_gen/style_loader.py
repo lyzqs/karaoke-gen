@@ -99,7 +99,12 @@ DEFAULT_KARAOKE_STYLE = {
     "encoding": 0,
     # Layout settings
     "max_line_length": 40,
+    "max_visible_lines": 2,
     "top_padding": 200,
+    "bottom_padding_percent": 16.0,
+    "line_left_padding_percent": 11.0,
+    "line_right_padding_percent": 11.0,
+    "show_section_markers": False,
     "font_size": 100,
 }
 

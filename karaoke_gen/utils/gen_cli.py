@@ -166,7 +166,7 @@ def _finalize_offline_track(
     countdown_padding_seconds: float | None,
     cdg_styles: dict | None,
 ) -> dict:
-    """Create the offline 720p karaoke deliverable without title/end screens."""
+    """Create the offline 720p deliverables without title/end screens."""
     artist = track["artist"]
     title = track["title"]
     safe_artist = sanitize_filename(artist)
@@ -219,11 +219,19 @@ def _finalize_offline_track(
     )
 
     output_files = kfinalise.prepare_output_filenames(base_name)
-    kfinalise.encode_karaoke_720p_mp4(
+    kfinalise.encode_with_vocals_720p_mp4(
         with_vocals_file=with_vocals_file,
-        instrumental_audio=selected_instrumental_file,
         output_file=output_files["final_karaoke_lossy_720p_mp4"],
     )
+
+    secondary_instrumental_video = None
+    if selected_instrumental_file:
+        kfinalise.encode_karaoke_720p_mp4(
+            with_vocals_file=with_vocals_file,
+            instrumental_audio=selected_instrumental_file,
+            output_file=output_files["karaoke_mp4"],
+        )
+        secondary_instrumental_video = output_files["karaoke_mp4"]
 
     input_files = {
         "instrumental_audio": selected_instrumental_file,
@@ -246,7 +254,7 @@ def _finalize_offline_track(
         "artist": artist,
         "title": title,
         "video_with_vocals": with_vocals_file,
-        "video_with_instrumental": output_files["final_karaoke_lossy_720p_mp4"],
+        "video_with_instrumental": secondary_instrumental_video,
         "final_video": None,
         "final_video_mkv": None,
         "final_video_lossy": None,
@@ -262,7 +270,7 @@ def _finalize_offline_track(
         result["final_karaoke_txt_zip"] = output_files["final_karaoke_txt_zip"]
 
     logger.info(
-        "Offline mode uses the lyrics-only 720p karaoke deliverable and skips title/end screen assembly."
+        "Offline mode now defaults to a 720p MP4 that preserves vocals; instrumental-only video is emitted as an optional secondary output."
     )
     return result
 
@@ -848,9 +856,11 @@ async def async_main():
             if args.offline and not args.no_video:
                 logger.info(f"Working Files:")
                 logger.info(f" Video With Vocals: {track['video_with_vocals']}")
+                if track.get("video_with_instrumental"):
+                    logger.info(f" Secondary Instrumental Video: {track['video_with_instrumental']}")
                 logger.info(f"")
                 logger.info(f"Final Video:")
-                logger.info(f" 720p Karaoke MP4 (AAC): {track['final_video_720p']}")
+                logger.info(f" 720p With-Vocals MP4 (AAC): {track['final_video_720p']}")
             else:
                 logger.info(f"Working Files:")
                 logger.info(f" Video With Vocals: {track['video_with_vocals']}")
@@ -966,7 +976,7 @@ async def async_main():
             sys.exit(1)
             return
         os.environ["KARAOKE_GEN_SKIP_TITLE_END_SCREENS"] = "1"
-        logger.info("Offline mode enabled: skipping title/end screen generation for lyrics-only deliverables.")
+        logger.info("Offline mode enabled: skipping title/end screen generation while keeping the default 720p MP4 on the original vocals.")
 
     # Set up environment variables for lyrics-only mode
     if args.lyrics_only:
@@ -1341,9 +1351,11 @@ async def async_main():
                 if args.offline:
                     logger.info(f"Working Files:")
                     logger.info(f" Video With Vocals: {final_track['video_with_vocals']}")
+                    if final_track.get("video_with_instrumental"):
+                        logger.info(f" Secondary Instrumental Video: {final_track['video_with_instrumental']}")
                     logger.info(f"")
                     logger.info(f"Final Video:")
-                    logger.info(f" 720p Karaoke MP4 (AAC): {final_track['final_video_720p']}")
+                    logger.info(f" 720p With-Vocals MP4 (AAC): {final_track['final_video_720p']}")
                 else:
                     logger.info(f"Working Files:")
                     logger.info(f" Video With Vocals: {final_track['video_with_vocals']}")

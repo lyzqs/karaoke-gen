@@ -36,7 +36,7 @@ class ScreenConfig:
     def __init__(
         self,
         line_height: int = 50,
-        max_visible_lines: int = 4,
+        max_visible_lines: int = 2,
         top_padding: int = None,
         video_width: int = 640,
         video_height: int = 360,
@@ -46,7 +46,6 @@ class ScreenConfig:
         fade_out_ms: int = 300,
         lead_in_color: str = "112, 112, 247",  # Default blue color in RGB format
         text_case_transform: str = "none",  # Options: "none", "uppercase", "lowercase", "propercase"
-        # New lead-in indicator configuration options
         lead_in_enabled: bool = True,
         lead_in_width_percent: float = 3.5,
         lead_in_height_percent: float = 4.0,
@@ -56,6 +55,10 @@ class ScreenConfig:
         lead_in_gap_threshold: float = 5.0,
         lead_in_horiz_offset_percent: float = 0.0,
         lead_in_vert_offset_percent: float = 0.0,
+        bottom_padding_percent: float = 16.0,
+        line_left_padding_percent: float = 11.0,
+        line_right_padding_percent: float = 11.0,
+        show_section_markers: bool = False,
     ):
         # Screen layout
         self.max_visible_lines = max_visible_lines
@@ -63,6 +66,10 @@ class ScreenConfig:
         self.top_padding = top_padding if top_padding is not None else line_height
         self.video_height = video_height
         self.video_width = video_width
+        self.bottom_padding_percent = bottom_padding_percent
+        self.line_left_padding_percent = line_left_padding_percent
+        self.line_right_padding_percent = line_right_padding_percent
+        self.show_section_markers = show_section_markers
         # Timing configuration
         self.screen_gap_threshold = screen_gap_threshold
         self.post_roll_time = post_roll_time
@@ -81,6 +88,18 @@ class ScreenConfig:
         self.lead_in_vert_offset_percent = lead_in_vert_offset_percent
         # Text formatting configuration
         self.text_case_transform = text_case_transform
+
+    def get_bottom_padding_pixels(self) -> int:
+        """Return the lower-third bottom padding in pixels."""
+        return int(round(self.video_height * (self.bottom_padding_percent / 100.0)))
+
+    def get_left_padding_pixels(self) -> int:
+        """Return the left subtitle anchor inset in pixels."""
+        return int(round(self.video_width * (self.line_left_padding_percent / 100.0)))
+
+    def get_right_padding_pixels(self) -> int:
+        """Return the right subtitle anchor inset in pixels."""
+        return int(round(self.video_width * (self.line_right_padding_percent / 100.0)))
 
     def get_lead_in_color_ass_format(self) -> str:
         """Convert RGB lead-in color to ASS format.
@@ -178,3 +197,4 @@ class LineState:
     text: str
     timing: LineTimingInfo
     y_position: int
+    line_index: int

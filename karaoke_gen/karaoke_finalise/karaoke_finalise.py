@@ -988,6 +988,27 @@ class KaraokeFinalise:
 
         self.execute_command_with_fallback(gpu_command, cpu_command, "Encoding 720p karaoke deliverable")
 
+    def encode_with_vocals_720p_mp4(self, with_vocals_file, output_file):
+        """Create the default 720p MP4 deliverable while preserving the original vocals."""
+        gpu_command = (
+            f'{self.ffmpeg_base_command} {self.hwaccel_decode_flags} -i "{with_vocals_file}" '
+            f'-map 0:v:0 -map 0:a:0 '
+            f'-c:v {self.video_encoder} -vf "{self.scale_filter}=1280:720" '
+            f'{self.get_nvenc_quality_settings("medium")} -b:v 2000k '
+            f'-c:a {self.aac_codec} -ar 48000 -b:a 128k '
+            f'{self.mp4_flags} "{output_file}"'
+        )
+
+        cpu_command = (
+            f'{self.ffmpeg_base_command} -i "{with_vocals_file}" '
+            f'-map 0:v:0 -map 0:a:0 -c:v libx264 -vf "scale=1280:720" '
+            f'-b:v 2000k -preset medium -tune animation '
+            f'-c:a {self.aac_codec} -ar 48000 -b:a 128k '
+            f'{self.mp4_flags} "{output_file}"'
+        )
+
+        self.execute_command_with_fallback(gpu_command, cpu_command, "Encoding 720p with-vocals deliverable")
+
     def prepare_concat_filter(self, input_files):
         """Prepare the concat filter and additional input for end credits if present"""
         env_mov_input = ""

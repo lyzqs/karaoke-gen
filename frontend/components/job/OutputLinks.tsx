@@ -179,7 +179,6 @@ export function OutputLinks({ job, onJobUpdated }: OutputLinksProps) {
   // Check if we have any downloads (and outputs haven't been deleted)
   const hasDownloads = !outputsDeleted && downloadUrls && (
     downloadUrls?.finals?.lossy_720p_mp4 ||
-    downloadUrls?.finals?.lossy_4k_mp4 ||
     downloadUrls?.videos?.with_vocals ||
     downloadUrls?.packages?.cdg_zip ||
     downloadUrls?.packages?.txt_zip
@@ -248,16 +247,6 @@ export function OutputLinks({ job, onJobUpdated }: OutputLinksProps) {
           {/* Downloads */}
           {hasDownloads && (
             <>
-                {downloadUrls?.finals?.lossy_4k_mp4 && (
-                  <a
-                    href={api.getDownloadUrl(job.job_id, "finals", "lossy_4k_mp4")}
-                    className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-[var(--brand-pink)] hover:bg-[var(--brand-pink-hover)] text-white transition-colors"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Download className="w-3 h-3" />
-                    4K Video
-                  </a>
-                )}
                 {downloadUrls?.finals?.lossy_720p_mp4 && (
                   <a
                     href={api.getDownloadUrl(job.job_id, "finals", "lossy_720p_mp4")}

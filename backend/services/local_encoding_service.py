@@ -346,6 +346,33 @@ class LocalEncodingService:
             gpu_command, cpu_command, "Converting MOV to MP4"
         )
 
+    def prepare_with_vocals_mp4(
+        self,
+        input_file: str,
+        output_file: str,
+    ) -> bool:
+        """
+        Prepare an MP4 with the original vocals preserved.
+
+        Args:
+            input_file: Path to the source karaoke video
+            output_file: Path for the MP4 output
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if os.path.abspath(input_file) == os.path.abspath(output_file):
+            return True
+
+        if input_file.lower().endswith(".mp4"):
+            command = (
+                f'{self._ffmpeg_base_command} -i "{input_file}" '
+                f'-c copy {self.MP4_FLAGS} "{output_file}"'
+            )
+            return self._execute_command(command, "Preparing with-vocals MP4")
+
+        return self.convert_mov_to_mp4(input_file, output_file)
+
     def encode_lossless_mp4(
         self,
         title_video: str,
@@ -532,25 +559,22 @@ class LocalEncodingService:
 
             # Step 2: Convert to MP4 if needed
             if config.output_with_vocals_mp4:
-                if not config.karaoke_video.endswith(".mp4"):
-                    self.logger.info("[Step 2/6] Converting karaoke video to MP4...")
-                    if not self.convert_mov_to_mp4(
-                        config.karaoke_video,
-                        config.output_with_vocals_mp4
-                    ):
-                        return EncodingResult(
-                            success=False,
-                            output_files=output_files,
-                            error="Failed to convert to MP4"
-                        )
-                    output_files["with_vocals_mp4"] = config.output_with_vocals_mp4
-                else:
-                    self.logger.info("[Step 2/6] Skipped - video already MP4")
+                self.logger.info("[Step 2/6] Preparing with-vocals MP4...")
+                if not self.prepare_with_vocals_mp4(
+                    config.karaoke_video,
+                    config.output_with_vocals_mp4
+                ):
+                    return EncodingResult(
+                        success=False,
+                        output_files=output_files,
+                        error="Failed to prepare with-vocals MP4"
+                    )
+                output_files["with_vocals_mp4"] = config.output_with_vocals_mp4
 
             # Step 3: Encode lossless 4K MP4
             if config.output_lossless_4k_mp4:
                 self.logger.info("[Step 3/6] Encoding lossless 4K MP4...")
-                karaoke_for_concat = config.output_karaoke_mp4 or config.karaoke_video
+                karaoke_for_concat = config.output_with_vocals_mp4 or config.karaoke_video
                 if not self.encode_lossless_mp4(
                     config.title_video,
                     karaoke_for_concat,

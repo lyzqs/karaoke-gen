@@ -208,7 +208,7 @@ INDEX_HTML = """<!doctype html>
     <p class="lead">
       Upload local audio and an optional lyrics file, then run the full karaoke generation pipeline
       without AudioShake, RunPod, or online lyrics APIs. This path uses Local Whisper for word-level timing
-      and delivers a 720p karaoke MP4 without title or end-card overlays.
+      and delivers a 720p MP4 that preserves the original vocals by default, without title or end-card overlays.
     </p>
 
     <div class="layout">
@@ -220,7 +220,7 @@ INDEX_HTML = """<!doctype html>
 
           <label for="lyrics_file">Lyrics File</label>
           <input id="lyrics_file" name="lyrics_file" type="file" accept=".txt,.lrc,.docx,.rtf" />
-          <div class="hint">Recommended for best word alignment, furigana placement, and final highlighting accuracy.</div>
+          <div class="hint">Recommended for best word alignment, furigana placement, karaoke styling, and highlight accuracy.</div>
 
           <label for="artist">Artist</label>
           <input id="artist" name="artist" type="text" placeholder="Optional, derived from filename if omitted" />
@@ -597,7 +597,7 @@ class LocalWebUIServer:
                 primary_video = self._find_primary_video(job)
                 if primary_video is None:
                     job.status = "failed"
-                    job.error = "karaoke-gen finished but did not produce a playable MP4 output"
+                    job.error = "karaoke-gen finished but did not produce a playable default with-vocals MP4 output"
                 else:
                     job.status = "completed"
                     job.error = None
@@ -639,26 +639,33 @@ class LocalWebUIServer:
         label = item["label"].lower()
         if "final karaoke lossy 720p" in label or "(lossy 720p).mp4" in label:
             return (0, label)
-        if "(karaoke).mp4" in label:
+        if "(with vocals).mp4" in label or "with_vocals.mp4" in label:
             return (1, label)
-        if "(with vocals).mp4" in label:
+        if "(with vocals).mkv" in label or "(with vocals).mov" in label or "with_vocals." in label:
             return (2, label)
-        if "(lossless 4k).mp4" in label:
+        if "(karaoke).mp4" in label:
             return (3, label)
-        if "(lossy 4k).mp4" in label:
+        if "(lossless 4k).mp4" in label:
             return (4, label)
-        if item["kind"] == "video":
+        if "(lossy 4k).mp4" in label:
             return (5, label)
-        return (6, label)
+        if item["kind"] == "video":
+            return (6, label)
+        return (7, label)
+
+    def _is_default_vocals_video(self, item: Dict[str, str]) -> bool:
+        label = item["label"].lower()
+        return item["kind"] == "video" and label.endswith(".mp4") and (
+            "final karaoke lossy 720p" in label
+            or "(lossy 720p).mp4" in label
+            or "(with vocals).mp4" in label
+            or "with_vocals.mp4" in label
+        )
 
     def _find_primary_video(self, job: LocalJob) -> Optional[Dict[str, str]]:
-        mp4_outputs = [
-            item
-            for item in job.outputs
-            if item["kind"] == "video" and item["label"].lower().endswith(".mp4")
-        ]
+        default_outputs = [item for item in job.outputs if self._is_default_vocals_video(item)]
 
-        for item in mp4_outputs:
+        for item in default_outputs:
             path = self._resolve_job_path(job.output_dir, item["label"])
             if self._is_playable_video(path):
                 return item

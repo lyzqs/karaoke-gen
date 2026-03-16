@@ -255,6 +255,30 @@ def test_encode_720p_version_aac_at(mock_execute_fallback, finaliser_with_aac_at
     )
     mock_execute_fallback.assert_called_once_with(expected_gpu_cmd, expected_cpu_cmd, "Encoding 720p version of the final video")
 
+@patch.object(KaraokeFinalise, 'execute_command_with_fallback')
+def test_encode_with_vocals_720p_mp4_aac(mock_execute_fallback, finaliser_with_aac):
+    """Test the default offline 720p deliverable keeps the source vocal track."""
+    finaliser_with_aac.encode_with_vocals_720p_mp4(WITH_VOCALS_MOV, OUTPUT_FILES["final_karaoke_lossy_720p_mp4"])
+
+    expected_gpu_cmd = (
+        f'{finaliser_with_aac.ffmpeg_base_command}  -i "{WITH_VOCALS_MOV}" '
+        f'-map 0:v:0 -map 0:a:0 '
+        f'-c:v libx264 -vf "scale=1280:720" '
+        f'-preset p4 -cq 23 -b:v 2000k '
+        f'-c:a aac -ar 48000 -b:a 128k {finaliser_with_aac.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossy_720p_mp4"]}"'
+    )
+    expected_cpu_cmd = (
+        f'{finaliser_with_aac.ffmpeg_base_command} -i "{WITH_VOCALS_MOV}" '
+        f'-map 0:v:0 -map 0:a:0 -c:v libx264 -vf "scale=1280:720" '
+        f'-b:v 2000k -preset medium -tune animation '
+        f'-c:a aac -ar 48000 -b:a 128k {finaliser_with_aac.mp4_flags} "{OUTPUT_FILES["final_karaoke_lossy_720p_mp4"]}"'
+    )
+    mock_execute_fallback.assert_called_once_with(
+        expected_gpu_cmd,
+        expected_cpu_cmd,
+        "Encoding 720p with-vocals deliverable",
+    )
+
 
 # --- remux_and_encode_output_video_files Tests ---
 
