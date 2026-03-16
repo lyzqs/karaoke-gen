@@ -155,6 +155,19 @@ def auto_select_instrumental(track: dict, track_dir: str, logger: logging.Logger
     )
 
 
+def _ensure_output_file(output_files: dict, key: str, base_name: str, kfinalise: KaraokeFinalise) -> str:
+    """Backfill required output paths when a caller provides a partial output map."""
+    if output_files.get(key):
+        return output_files[key]
+
+    suffix = kfinalise.suffixes.get(key)
+    if suffix is None:
+        raise KeyError(key)
+
+    output_files[key] = f"{base_name}{suffix}"
+    return output_files[key]
+
+
 def _finalize_offline_track(
     track: dict,
     track_dir: str,
@@ -218,20 +231,27 @@ def _finalize_offline_track(
         no_video=False,
     )
 
-    output_files = kfinalise.prepare_output_filenames(base_name)
+    output_files = dict(kfinalise.prepare_output_filenames(base_name))
+    primary_with_vocals_720p = _ensure_output_file(
+        output_files,
+        "final_karaoke_lossy_720p_mp4",
+        base_name,
+        kfinalise,
+    )
     kfinalise.encode_with_vocals_720p_mp4(
         with_vocals_file=with_vocals_file,
-        output_file=output_files["final_karaoke_lossy_720p_mp4"],
+        output_file=primary_with_vocals_720p,
     )
 
     secondary_instrumental_video = None
     if selected_instrumental_file:
+        karaoke_mp4 = _ensure_output_file(output_files, "karaoke_mp4", base_name, kfinalise)
         kfinalise.encode_karaoke_720p_mp4(
             with_vocals_file=with_vocals_file,
             instrumental_audio=selected_instrumental_file,
-            output_file=output_files["karaoke_mp4"],
+            output_file=karaoke_mp4,
         )
-        secondary_instrumental_video = output_files["karaoke_mp4"]
+        secondary_instrumental_video = karaoke_mp4
 
     input_files = {
         "instrumental_audio": selected_instrumental_file,
@@ -241,8 +261,14 @@ def _finalize_offline_track(
         if not os.path.exists(input_files["karaoke_lrc"]):
             raise FileNotFoundError(f"Expected karaoke LRC file not found: {input_files['karaoke_lrc']}")
     if args.enable_cdg:
+        _ensure_output_file(output_files, "karaoke_mp3", base_name, kfinalise)
+        _ensure_output_file(output_files, "karaoke_cdg", base_name, kfinalise)
+        _ensure_output_file(output_files, "final_karaoke_cdg_zip", base_name, kfinalise)
         kfinalise.create_cdg_zip_file(input_files, output_files, artist, title)
     if args.enable_txt:
+        _ensure_output_file(output_files, "karaoke_mp3", base_name, kfinalise)
+        _ensure_output_file(output_files, "karaoke_txt", base_name, kfinalise)
+        _ensure_output_file(output_files, "final_karaoke_txt_zip", base_name, kfinalise)
         if not args.enable_cdg and not os.path.exists(output_files["karaoke_mp3"]):
             raise FileNotFoundError(
                 "TXT packaging requires the karaoke MP3 generated during CDG packaging. "
@@ -258,7 +284,7 @@ def _finalize_offline_track(
         "final_video": None,
         "final_video_mkv": None,
         "final_video_lossy": None,
-        "final_video_720p": output_files["final_karaoke_lossy_720p_mp4"],
+        "final_video_720p": primary_with_vocals_720p,
         "youtube_url": None,
         "brand_code": None,
         "new_brand_code_dir_path": None,
