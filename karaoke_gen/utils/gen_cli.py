@@ -38,6 +38,13 @@ from karaoke_gen.lyrics_transcriber.output.generator import OutputGenerator
 from karaoke_gen.utils import sanitize_filename
 from .cli_args import create_parser, process_style_overrides, is_url, is_file
 
+_FINALISE_SUFFIX_FALLBACKS = {
+    "karaoke_lrc": " (Karaoke).lrc",
+    "karaoke_mp4": " (Karaoke).mp4",
+    "karaoke_mp3": " (Karaoke).mp3",
+    "final_karaoke_lossy_720p_mp4": " (Final Karaoke Lossy 720p).mp4",
+}
+
 
 def _resolve_path_for_cwd(path: str, track_dir: str) -> str:
     """
@@ -160,7 +167,10 @@ def _ensure_output_file(output_files: dict, key: str, base_name: str, kfinalise:
     if output_files.get(key):
         return output_files[key]
 
-    suffix = kfinalise.suffixes.get(key)
+    suffixes = getattr(kfinalise, "suffixes", {}) or {}
+    suffix = suffixes.get(key) if hasattr(suffixes, "get") else None
+    if not isinstance(suffix, str) or not suffix:
+        suffix = _FINALISE_SUFFIX_FALLBACKS.get(key)
     if suffix is None:
         raise KeyError(key)
 
@@ -1195,6 +1205,7 @@ async def async_main():
                 reviewed_result, padded_audio_path, padding_added, padding_seconds = countdown_processor.process(
                     correction_result=reviewed_result,
                     audio_filepath=resolved_audio_filepath,
+                    include_countdown_text=not args.offline,
                 )
 
                 # Update track with countdown info
@@ -1225,6 +1236,8 @@ async def async_main():
                     generate_plain_text=False,
                     generate_lrc=False,
                     video_resolution="720p" if args.offline else "4k",
+                    prefer_reference_lyrics_source="file" if args.offline else None,
+                    strip_countdown_text=args.offline,
                 )
 
                 output_generator = OutputGenerator(output_config, logger)

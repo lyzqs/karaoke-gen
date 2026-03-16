@@ -12,6 +12,8 @@ import shutil
 from unittest.mock import MagicMock, patch, call, ANY
 from karaoke_gen.karaoke_gen import KaraokePrep
 from karaoke_gen.audio_processor import AudioProcessor
+from karaoke_gen.lyrics_transcriber.output.countdown_processor import CountdownProcessor
+from karaoke_gen.lyrics_transcriber.types import CorrectionResult, LyricsSegment, Word
 
 
 @pytest.fixture
@@ -109,6 +111,54 @@ class TestPadAudioFile:
                 mock_audio_processor.pad_audio_file(input_file, output_file, padding_seconds)
             
             assert 'Timeout while padding' in str(exc_info.value)
+
+
+class TestCountdownProcessorOutputModes:
+    """Tests for countdown text suppression in offline final outputs."""
+
+    def test_process_can_shift_timestamps_without_visible_countdown_segment(self, temp_dir):
+        correction_result = CorrectionResult(
+            original_segments=[],
+            corrected_segments=[
+                LyricsSegment(
+                    id="seg-1",
+                    text="hello world",
+                    words=[
+                        Word(id="w-1", text="hello", start_time=0.4, end_time=0.8, confidence=1.0),
+                        Word(id="w-2", text="world", start_time=0.8, end_time=1.2, confidence=1.0),
+                    ],
+                    start_time=0.4,
+                    end_time=1.2,
+                )
+            ],
+            corrections=[],
+            corrections_made=0,
+            confidence=1.0,
+            reference_lyrics={},
+            anchor_sequences=[],
+            gap_sequences=[],
+            resized_segments=[],
+            metadata={},
+            correction_steps=[],
+            word_id_map={},
+            segment_id_map={},
+        )
+
+        processor = CountdownProcessor(cache_dir=temp_dir)
+
+        with patch.object(processor, "_create_padded_audio", return_value=os.path.join(temp_dir, "padded.flac")):
+            updated_result, padded_audio_path, padding_added, padding_seconds = processor.process(
+                correction_result=correction_result,
+                audio_filepath=os.path.join(temp_dir, "input.flac"),
+                include_countdown_text=False,
+            )
+
+        assert padding_added is True
+        assert padding_seconds == 3.0
+        assert padded_audio_path.endswith("padded.flac")
+        assert [segment.text for segment in updated_result.corrected_segments] == ["hello world"]
+        assert updated_result.corrected_segments[0].start_time == pytest.approx(3.4)
+        assert updated_result.corrected_segments[0].words[0].start_time == pytest.approx(3.4)
 
 
 class TestApplyCountdownPaddingToInstrumentals:
@@ -1085,4 +1135,3 @@ class TestCustomInstrumentalWithCountdownPadding:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
-

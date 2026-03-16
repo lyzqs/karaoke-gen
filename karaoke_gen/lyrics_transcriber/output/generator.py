@@ -3,8 +3,9 @@ import os
 import logging
 from typing import List, Optional
 import json
+from copy import deepcopy
 
-from karaoke_gen.lyrics_transcriber.types import LyricsData
+from karaoke_gen.lyrics_transcriber.types import LyricsData, LyricsSegment, Word
 from karaoke_gen.lyrics_transcriber.correction.corrector import CorrectionResult
 from karaoke_gen.lyrics_transcriber.output.plain_text import PlainTextGenerator
 from karaoke_gen.lyrics_transcriber.ruby import deserialize_ruby_annotations
@@ -13,6 +14,7 @@ from karaoke_gen.lyrics_transcriber.output.subtitles import SubtitlesGenerator
 from karaoke_gen.lyrics_transcriber.output.video import VideoGenerator
 from karaoke_gen.lyrics_transcriber.output.segment_resizer import SegmentResizer
 from karaoke_gen.lyrics_transcriber.output.cdg import CDGGenerator
+from karaoke_gen.lyrics_transcriber.output.countdown_processor import CountdownProcessor
 from karaoke_gen.lyrics_transcriber.core.config import OutputConfig
 
 
@@ -177,6 +179,192 @@ class OutputGenerator:
 
         return []
 
+    def _strip_countdown_segments(self, segments: List[LyricsSegment]) -> List[LyricsSegment]:
+        """Remove visible countdown lyric segments from final output."""
+        filtered = [
+            segment
+            for segment in segments
+            if segment.text.strip() != CountdownProcessor.COUNTDOWN_TEXT
+        ]
+        removed = len(segments) - len(filtered)
+        if removed:
+            self.logger.info("Removed %d countdown segment(s) from final output", removed)
+        return filtered
+
+    def _copy_word_with_timing(self, source_word: Word, timed_word: Word) -> Word:
+        """Return a canonical word with the timing from an existing timed word."""
+        return Word(
+            id=timed_word.id,
+            text=source_word.text,
+            start_time=timed_word.start_time,
+            end_time=timed_word.end_time,
+            confidence=timed_word.confidence,
+            created_during_correction=False,
+        )
+
+    def _distribute_reference_words_over_segment(
+        self,
+        reference_segment: LyricsSegment,
+        timed_segment: LyricsSegment,
+    ) -> LyricsSegment:
+        """Fallback: keep canonical text and evenly distribute word timings across a segment."""
+        if not reference_segment.words:
+            return LyricsSegment(
+                id=timed_segment.id,
+                text=reference_segment.text.strip(),
+                words=[],
+                start_time=timed_segment.start_time,
+                end_time=timed_segment.end_time,
+            )
+
+        start_time = timed_segment.start_time
+        end_time = max(timed_segment.end_time, start_time)
+        word_count = len(reference_segment.words)
+        span = max(end_time - start_time, 0.0)
+        step = span / word_count if word_count else 0.0
+
+        rebuilt_words: List[Word] = []
+        for index, ref_word in enumerate(reference_segment.words):
+            word_start = start_time + (step * index)
+            word_end = end_time if index == word_count - 1 else start_time + (step * (index + 1))
+            rebuilt_words.append(
+                Word(
+                    id=timed_segment.words[min(index, len(timed_segment.words) - 1)].id if timed_segment.words else ref_word.id,
+                    text=ref_word.text,
+                    start_time=word_start,
+                    end_time=word_end,
+                    confidence=1.0,
+                    created_during_correction=False,
+                )
+            )
+
+        return LyricsSegment(
+            id=timed_segment.id,
+            text=reference_segment.text.strip(),
+            words=rebuilt_words,
+            start_time=rebuilt_words[0].start_time,
+            end_time=rebuilt_words[-1].end_time,
+        )
+
+    def _rebuild_segments_from_reference_words(
+        self,
+        reference_segments: List[LyricsSegment],
+        timed_words: List[Word],
+    ) -> List[LyricsSegment]:
+        """Rebuild canonical segments using an equal-length timed word sequence."""
+        rebuilt_segments: List[LyricsSegment] = []
+        timed_index = 0
+
+        for reference_segment in reference_segments:
+            word_count = len(reference_segment.words)
+            timed_slice = timed_words[timed_index : timed_index + word_count]
+            timed_index += word_count
+
+            if not timed_slice:
+                continue
+
+            rebuilt_words = [
+                self._copy_word_with_timing(reference_word, timed_word)
+                for reference_word, timed_word in zip(reference_segment.words, timed_slice)
+            ]
+            rebuilt_segments.append(
+                LyricsSegment(
+                    id=reference_segment.id,
+                    text=reference_segment.text.strip(),
+                    words=rebuilt_words,
+                    start_time=rebuilt_words[0].start_time,
+                    end_time=rebuilt_words[-1].end_time,
+                )
+            )
+
+        return rebuilt_segments
+
+    def _remap_segments_to_reference(
+        self,
+        timed_segments: List[LyricsSegment],
+        reference_segments: List[LyricsSegment],
+    ) -> List[LyricsSegment]:
+        """Prefer canonical reference text while preserving as much timing as possible."""
+        if not timed_segments or not reference_segments:
+            return timed_segments
+
+        timed_words = [word for segment in timed_segments for word in segment.words]
+        reference_words = [word for segment in reference_segments for word in segment.words]
+
+        if reference_words and len(reference_words) == len(timed_words):
+            self.logger.info(
+                "Rebuilding final output from canonical reference lyrics (%d words)",
+                len(reference_words),
+            )
+            rebuilt = self._rebuild_segments_from_reference_words(reference_segments, timed_words)
+            if rebuilt:
+                return rebuilt
+
+        if len(reference_segments) == len(timed_segments):
+            self.logger.info(
+                "Canonical segment count matches timed output (%d segments); remapping segment-by-segment",
+                len(reference_segments),
+            )
+            rebuilt_segments: List[LyricsSegment] = []
+            for reference_segment, timed_segment in zip(reference_segments, timed_segments):
+                if reference_segment.words and len(reference_segment.words) == len(timed_segment.words):
+                    rebuilt_words = [
+                        self._copy_word_with_timing(reference_word, timed_word)
+                        for reference_word, timed_word in zip(reference_segment.words, timed_segment.words)
+                    ]
+                    rebuilt_segments.append(
+                        LyricsSegment(
+                            id=timed_segment.id,
+                            text=reference_segment.text.strip(),
+                            words=rebuilt_words,
+                            start_time=rebuilt_words[0].start_time,
+                            end_time=rebuilt_words[-1].end_time,
+                        )
+                    )
+                else:
+                    rebuilt_segments.append(
+                        self._distribute_reference_words_over_segment(reference_segment, timed_segment)
+                    )
+            return rebuilt_segments
+
+        if reference_words and len(reference_words) < len(timed_words):
+            self.logger.warning(
+                "Dropping %d extra timed word(s) to restore canonical output",
+                len(timed_words) - len(reference_words),
+            )
+            rebuilt = self._rebuild_segments_from_reference_words(
+                reference_segments,
+                timed_words[: len(reference_words)],
+            )
+            if rebuilt:
+                return rebuilt
+
+        self.logger.warning(
+            "Unable to remap final output to canonical reference lyrics cleanly; keeping reviewed segments"
+        )
+        return timed_segments
+
+    def _prepare_correction_for_output(self, correction_result: CorrectionResult) -> CorrectionResult:
+        """Apply offline-only sanitization before generating final artifacts."""
+        prepared = deepcopy(correction_result)
+
+        if self.config.strip_countdown_text:
+            prepared.corrected_segments = self._strip_countdown_segments(prepared.corrected_segments)
+            if prepared.resized_segments:
+                prepared.resized_segments = self._strip_countdown_segments(prepared.resized_segments)
+
+        canonical_source = self.config.prefer_reference_lyrics_source
+        if canonical_source and prepared.reference_lyrics:
+            reference_lyrics = prepared.reference_lyrics.get(canonical_source)
+            if reference_lyrics and reference_lyrics.segments:
+                prepared.corrected_segments = self._remap_segments_to_reference(
+                    prepared.corrected_segments,
+                    reference_lyrics.segments,
+                )
+                prepared.resized_segments = []
+
+        return prepared
+
     def generate_outputs(
         self,
         transcription_corrected: Optional[CorrectionResult],
@@ -205,6 +393,7 @@ class OutputGenerator:
         try:
             # Only process transcription-related outputs if we have transcription data
             if transcription_corrected:
+                transcription_corrected = self._prepare_correction_for_output(transcription_corrected)
 
                 # Resize corrected segments
                 resized_segments = self.segment_resizer.resize_segments(transcription_corrected.corrected_segments)

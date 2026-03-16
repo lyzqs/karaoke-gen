@@ -759,6 +759,7 @@ class KaraokePrep:
                     correction_result, audio_path, padding_added, padding_seconds = countdown_processor.process(
                         correction_result=correction_result,
                         audio_filepath=audio_path,
+                        include_countdown_text=not self.offline,
                     )
 
                     # Update processed_track with countdown info
@@ -793,6 +794,8 @@ class KaraokePrep:
                         generate_lrc=True,
                         video_resolution="720p" if self.offline else "4k",
                         subtitle_offset_ms=self.subtitle_offset_ms,
+                        prefer_reference_lyrics_source="file" if self.offline else None,
+                        strip_countdown_text=self.offline,
                     )
 
                     output_generator = OutputGenerator(output_config, self.logger)

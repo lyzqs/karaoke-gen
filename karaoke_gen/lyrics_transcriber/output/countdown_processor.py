@@ -49,6 +49,7 @@ class CountdownProcessor:
         self,
         correction_result: CorrectionResult,
         audio_filepath: str,
+        include_countdown_text: bool = True,
     ) -> Tuple[CorrectionResult, str, bool, float]:
         """
         Process correction result and audio file, adding countdown if needed.
@@ -56,6 +57,8 @@ class CountdownProcessor:
         Args:
             correction_result: The CorrectionResult to potentially modify
             audio_filepath: Path to the original audio file
+            include_countdown_text: Whether to insert the visible "3... 2... 1..."
+                lyric segment after shifting timestamps.
 
         Returns:
             Tuple of:
@@ -81,7 +84,10 @@ class CountdownProcessor:
         padded_audio_path = self._create_padded_audio(audio_filepath)
 
         # Create modified correction result with adjusted timestamps
-        modified_result = self._add_countdown_to_result(correction_result)
+        modified_result = self._add_countdown_to_result(
+            correction_result,
+            include_countdown_text=include_countdown_text,
+        )
 
         self.logger.info(
             f"Countdown intro added successfully. "
@@ -174,7 +180,11 @@ class CountdownProcessor:
             self.logger.error(f"Failed to create padded audio: {e.output}")
             raise RuntimeError(f"ffmpeg command failed: {e.output}")
 
-    def _add_countdown_to_result(self, correction_result: CorrectionResult) -> CorrectionResult:
+    def _add_countdown_to_result(
+        self,
+        correction_result: CorrectionResult,
+        include_countdown_text: bool = True,
+    ) -> CorrectionResult:
         """
         Create a new CorrectionResult with countdown segment and adjusted timestamps.
 
@@ -200,13 +210,14 @@ class CountdownProcessor:
                 self.COUNTDOWN_PADDING_SECONDS
             )
 
-        # Create and prepend countdown segment
-        countdown_segment = self._create_countdown_segment()
-        modified_result.corrected_segments.insert(0, countdown_segment)
+        if include_countdown_text:
+            # Create and prepend countdown segment
+            countdown_segment = self._create_countdown_segment()
+            modified_result.corrected_segments.insert(0, countdown_segment)
 
-        # Also add to resized_segments if present
-        if modified_result.resized_segments:
-            modified_result.resized_segments.insert(0, countdown_segment)
+            # Also add to resized_segments if present
+            if modified_result.resized_segments:
+                modified_result.resized_segments.insert(0, countdown_segment)
 
         self.logger.debug(
             f"Added countdown segment and shifted {len(modified_result.corrected_segments)} segments "
@@ -303,4 +314,3 @@ class CountdownProcessor:
             RuntimeError: If ffmpeg command fails
         """
         return self._create_padded_audio(audio_filepath)
-

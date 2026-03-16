@@ -61,3 +61,7 @@ class OutputConfig:
     # Whether to allow preview video generation during review
     # Separate from render_video which controls final output
     allow_preview_video: bool = True
+
+    # Final output sanitization options used by the local offline flow.
+    prefer_reference_lyrics_source: Optional[str] = None
+    strip_countdown_text: bool = False
