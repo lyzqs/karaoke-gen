@@ -314,6 +314,45 @@ def test_finalize_offline_track_defaults_to_with_vocals_720p_delivery(mock_kfina
     assert result["video_with_instrumental"].endswith("(Karaoke).mp4")
 
 
+@patch("karaoke_gen.utils.gen_cli.KaraokeFinalise")
+def test_finalize_offline_track_falls_back_to_clean_lrc_in_lyrics_subdir(mock_kfinalise, mock_base_args, mock_logger):
+    """Offline finalisation should use the regenerated lyrics/ LRC when the root copy is absent."""
+    track = {
+        "artist": "Test Artist",
+        "title": "Test Title",
+        "with_vocals_video": "./Test Artist - Test Title (With Vocals).mkv",
+    }
+    mock_instance = mock_kfinalise.return_value
+    mock_instance.suffixes = dict(gen_cli.DEFAULT_FILENAME_SUFFIXES)
+    mock_instance.prepare_output_filenames.return_value = {
+        "final_karaoke_lossy_720p_mp4": "Test Artist - Test Title (Final Karaoke Lossy 720p).mp4",
+    }
+    mock_base_args.enable_cdg = True
+    mock_base_args.enable_txt = False
+
+    with patch(
+        "karaoke_gen.utils.gen_cli.os.path.exists",
+        side_effect=lambda path: path in {
+            "./Test Artist - Test Title (With Vocals).mkv",
+            "lyrics/Test Artist - Test Title (Karaoke).lrc",
+        },
+    ):
+        gen_cli._finalize_offline_track(
+            track=track,
+            track_dir=".",
+            args=mock_base_args,
+            logger=mock_logger,
+            log_formatter=logging.Formatter("%(message)s"),
+            log_level=logging.INFO,
+            selected_instrumental_file="instrumental.flac",
+            countdown_padding_seconds=3.0,
+            cdg_styles={"font_path": None},
+        )
+
+    input_files = mock_instance.create_cdg_zip_file.call_args.args[0]
+    assert input_files["karaoke_lrc"] == "lyrics/Test Artist - Test Title (Karaoke).lrc"
+
+
 @patch("karaoke_gen.utils.gen_cli._finalize_offline_track")
 @patch("karaoke_gen.utils.gen_cli.auto_select_instrumental", return_value="selected_instrumental.flac")
 @patch("karaoke_gen.utils.gen_cli.KaraokePrep")

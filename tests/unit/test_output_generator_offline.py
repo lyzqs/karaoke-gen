@@ -4,6 +4,7 @@ from karaoke_gen.lyrics_transcriber.core.config import OutputConfig
 from karaoke_gen.lyrics_transcriber.output.countdown_processor import CountdownProcessor
 from karaoke_gen.lyrics_transcriber.output.generator import OutputGenerator
 from karaoke_gen.lyrics_transcriber.types import (
+    CorrectionStep,
     CorrectionResult,
     LyricsData,
     LyricsMetadata,
@@ -254,3 +255,77 @@ def test_prepare_correction_for_output_strips_ruby_directives_from_reviewed_segm
     assert [segment.text for segment in prepared.corrected_segments] == ["hello world", "goodbye now"]
     assert prepared.corrected_segments[0].start_time == pytest.approx(3.0)
     assert prepared.corrected_segments[1].start_time == pytest.approx(4.2)
+
+
+def test_write_corrections_data_drops_offline_debug_steps_with_ruby_and_tail_text(tmp_path):
+    canonical_segments = [
+        _make_segment("ref-1", "canon one", 0.0, 0.0),
+        _make_segment("ref-2", "canon two", 0.0, 0.0),
+    ]
+    correction_result = CorrectionResult(
+        original_segments=[_make_segment("orig-1", "transcribed one", 0.0, 1.0)],
+        corrected_segments=[
+            _make_segment("seg-1", "canon one", 3.0, 4.0),
+            _make_segment("seg-ruby", "@Ruby54=追,お", 4.0, 4.1),
+            _make_segment("seg-tail", "banned tail text", 4.1, 5.0),
+        ],
+        corrections=[],
+        corrections_made=2,
+        confidence=1.0,
+        reference_lyrics={
+            "file": LyricsData(
+                source="file",
+                segments=canonical_segments,
+                metadata=LyricsMetadata(
+                    source="file",
+                    track_name="Track",
+                    artist_names="Artist",
+                    is_synced=False,
+                    lyrics_provider="file",
+                    lyrics_provider_id="lyrics.lrc",
+                ),
+            )
+        },
+        anchor_sequences=[],
+        gap_sequences=[],
+        resized_segments=[],
+        metadata={},
+        correction_steps=[
+            CorrectionStep(
+                handler_name="test-handler",
+                affected_word_ids=[],
+                affected_segment_ids=[],
+                corrections=[],
+                segments_before=[
+                    _make_segment("step-ruby", "@Ruby54=追,お", 0.0, 0.0),
+                    _make_segment("step-tail", "banned tail text", 0.0, 0.0),
+                ],
+                segments_after=[
+                    _make_segment("step-ruby-after", "@Ruby54=追,お", 0.0, 0.0),
+                    _make_segment("step-tail-after", "banned tail text", 0.0, 0.0),
+                ],
+            )
+        ],
+        word_id_map={"old": "new"},
+        segment_id_map={"seg-old": "seg-new"},
+    )
+
+    generator = OutputGenerator(
+        config=OutputConfig(
+            output_styles_json="",
+            output_dir=str(tmp_path),
+            cache_dir=str(tmp_path / "cache"),
+            render_video=True,
+            generate_cdg=False,
+            prefer_reference_lyrics_source="file",
+            strip_countdown_text=True,
+        )
+    )
+
+    prepared = generator._prepare_correction_for_output(correction_result)
+    output_path = generator.write_corrections_data(prepared, "Test Artist - Test Title")
+    payload = output_path and open(output_path, "r", encoding="utf-8").read()
+
+    assert "@Ruby54=追,お" not in payload
+    assert "banned tail text" not in payload
+    assert '"correction_steps": []' in payload

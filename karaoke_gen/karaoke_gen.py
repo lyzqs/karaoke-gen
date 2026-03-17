@@ -808,6 +808,11 @@ class KaraokePrep:
                         output_prefix=output_prefix,
                     )
 
+                    if outputs and outputs.lrc:
+                        dest_lrc = os.path.join(track_output_dir, f"{artist_title} (Karaoke).lrc")
+                        shutil.copy2(outputs.lrc, dest_lrc)
+                        self.logger.info(f"Updated root karaoke LRC from sanitized output: {dest_lrc}")
+
                     # Copy video to expected location in parent directory
                     if outputs and outputs.video:
                         source_video = outputs.video

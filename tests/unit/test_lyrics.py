@@ -299,7 +299,72 @@ class TestLyrics:
         assert lyrics_config.disable_online_sources is True
         assert output_config.fetch_lyrics is False
         assert output_config.video_resolution == "720p"
-    
+
+    def test_transcribe_lyrics_offline_with_local_lyrics_prefers_file_reference_and_copies_generated_corrections(
+        self, basic_karaoke_gen, temp_dir
+    ):
+        """Offline LRC ingest should preserve the transcriber's sanitized corrections export."""
+        track_output_dir = os.path.join(temp_dir, "track")
+        os.makedirs(track_output_dir, exist_ok=True)
+
+        artist = "Test Artist"
+        title = "Test Title"
+        input_audio_wav = os.path.join(temp_dir, "input.wav")
+        lyrics_file = os.path.join(temp_dir, "reference.lrc")
+
+        with open(input_audio_wav, "w") as f:
+            f.write("mock audio content")
+        with open(lyrics_file, "w", encoding="utf-8") as f:
+            f.write("[00:01.00]canon one\n")
+
+        basic_karaoke_gen.lyrics_processor.offline = True
+        basic_karaoke_gen.lyrics_processor.lyrics_file = lyrics_file
+
+        mock_transcriber = MagicMock()
+        mock_transcriber_instance = MagicMock()
+        mock_transcriber.return_value = mock_transcriber_instance
+
+        lyrics_dir = os.path.join(track_output_dir, "lyrics")
+        os.makedirs(lyrics_dir, exist_ok=True)
+        generated_corrections = os.path.join(lyrics_dir, "generated-corrections.json")
+        with open(generated_corrections, "w", encoding="utf-8") as f:
+            f.write("{}")
+
+        mock_results = MagicMock()
+        mock_results.lrc_filepath = os.path.join(lyrics_dir, "test.lrc")
+        mock_results.ass_filepath = os.path.join(lyrics_dir, "test.ass")
+        mock_results.video_filepath = os.path.join(lyrics_dir, "test.mkv")
+        mock_results.corrected_txt = os.path.join(lyrics_dir, "test.txt")
+        mock_results.corrections_json = generated_corrections
+        mock_results.transcription_corrected = MagicMock()
+        mock_results.transcription_corrected.corrected_segments = [MagicMock(text="canon one")]
+        mock_transcriber_instance.process.return_value = mock_results
+
+        with patch("karaoke_gen.lyrics_processor.LyricsTranscriber", mock_transcriber), \
+             patch("shutil.copy2") as mock_copy2, \
+             patch.object(
+                 basic_karaoke_gen.lyrics_processor,
+                 "_check_transcription_providers",
+                 return_value={"configured": ["Local Whisper"], "missing": []},
+             ), \
+             patch("karaoke_gen.lyrics_processor.load_dotenv"):
+
+            basic_karaoke_gen.lyrics_processor.transcribe_lyrics(
+                input_audio_wav,
+                artist,
+                title,
+                track_output_dir,
+            )
+
+        output_config = mock_transcriber.call_args.kwargs["output_config"]
+        expected_corrections = os.path.join(
+            lyrics_dir,
+            f"{sanitize_filename(artist)} - {sanitize_filename(title)} (Lyrics Corrections).json",
+        )
+
+        assert output_config.prefer_reference_lyrics_source == "file"
+        mock_copy2.assert_any_call(generated_corrections, expected_corrections)
+
     def test_backup_existing_outputs(self, basic_karaoke_gen, temp_dir):
         """Test backing up existing outputs."""
         # Setup

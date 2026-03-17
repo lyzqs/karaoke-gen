@@ -447,6 +447,7 @@ class LyricsProcessor:
             enable_review=not self.skip_transcription_review,  # Honor the caller's setting
             subtitle_offset_ms=self.subtitle_offset_ms,
             add_countdown=False,  # Always defer - caller handles countdown after review
+            prefer_reference_lyrics_source="file" if self.offline and self.lyrics_file else None,
         )
 
         # Add this log entry to debug the OutputConfig
@@ -493,13 +494,15 @@ class LyricsProcessor:
             # Use sanitized names to be consistent with all other files created by lyrics_transcriber
             corrections_filename = f"{sanitized_artist} - {sanitized_title} (Lyrics Corrections).json"
             corrections_filepath = os.path.join(lyrics_dir, corrections_filename)
-            
-            # Use the CorrectionResult's to_dict() method to serialize
-            correction_data = results.transcription_corrected.to_dict()
-            
-            with open(corrections_filepath, 'w') as f:
-                json.dump(correction_data, f, indent=2)
-            
+
+            if results.corrections_json and os.path.exists(results.corrections_json):
+                if os.path.abspath(results.corrections_json) != os.path.abspath(corrections_filepath):
+                    shutil.copy2(results.corrections_json, corrections_filepath)
+            else:
+                correction_data = results.transcription_corrected.to_dict()
+                with open(corrections_filepath, 'w', encoding='utf-8') as f:
+                    json.dump(correction_data, f, indent=2, ensure_ascii=False)
+
             self.logger.info(f"Saved correction data to {corrections_filepath}")
 
         # Include lyrics_dir so downstream consumers (e.g. _store_lyrics_processing_metadata)

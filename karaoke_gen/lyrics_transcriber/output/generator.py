@@ -394,6 +394,26 @@ class OutputGenerator:
 
         return prepared
 
+    def _prepare_corrections_export(self, correction_result: CorrectionResult) -> CorrectionResult:
+        """Drop transient offline debug payload that can reintroduce stripped control text."""
+        export = deepcopy(correction_result)
+
+        if not (
+            self.config.render_video
+            and (self.config.prefer_reference_lyrics_source or self.config.strip_countdown_text)
+        ):
+            return export
+
+        export.correction_steps = []
+        export.corrections = [
+            correction
+            for correction in export.corrections
+            if not is_ruby_directive_line(correction.original_word)
+            and not is_ruby_directive_line(correction.corrected_word)
+        ]
+
+        return export
+
     def generate_outputs(
         self,
         transcription_corrected: Optional[CorrectionResult],
@@ -578,10 +598,11 @@ class OutputGenerator:
         """Write corrections data to JSON file."""
         self.logger.info("Writing corrections data JSON")
         output_path = self._get_output_path(f"{output_prefix} (Lyrics Corrections)", "json")
+        export_result = self._prepare_corrections_export(correction_result)
 
         try:
             with open(output_path, "w", encoding="utf-8") as f:
-                json.dump(correction_result.to_dict(), f, indent=2, ensure_ascii=False)
+                json.dump(export_result.to_dict(), f, indent=2, ensure_ascii=False)
             self.logger.info(f"Corrections data JSON generated: {output_path}")
             return output_path
         except Exception as e:

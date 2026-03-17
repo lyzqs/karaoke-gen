@@ -263,9 +263,13 @@ def _finalize_offline_track(
         )
         secondary_instrumental_video = karaoke_mp4
 
+    karaoke_lrc_candidates = [
+        os.path.join("lyrics", f"{base_name}{kfinalise.suffixes['karaoke_lrc']}"),
+        f"{base_name}{kfinalise.suffixes['karaoke_lrc']}",
+    ]
     input_files = {
         "instrumental_audio": selected_instrumental_file,
-        "karaoke_lrc": f"{base_name}{kfinalise.suffixes['karaoke_lrc']}",
+        "karaoke_lrc": next((path for path in karaoke_lrc_candidates if os.path.exists(path)), karaoke_lrc_candidates[0]),
     }
     if args.enable_cdg or args.enable_txt:
         if not os.path.exists(input_files["karaoke_lrc"]):
@@ -1249,6 +1253,12 @@ async def async_main():
                     audio_filepath=padded_audio_path,
                     output_prefix=output_prefix,
                 )
+
+                if outputs and outputs.lrc:
+                    artist_title = f"{sanitized_artist} - {sanitized_title}"
+                    dest_lrc = f"{artist_title} (Karaoke).lrc"
+                    shutil.copy2(outputs.lrc, dest_lrc)
+                    logger.info(f"Updated root karaoke LRC from sanitized output: {dest_lrc}")
 
                 # Copy video to expected location in track directory (we're in track_dir)
                 if outputs and outputs.video:
