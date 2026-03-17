@@ -157,3 +157,100 @@ def test_prepare_correction_for_output_drops_extra_timed_tail_segments(tmp_path)
     assert [segment.text for segment in prepared.corrected_segments] == ["canon one", "canon two"]
     assert prepared.corrected_segments[0].start_time == pytest.approx(3.0)
     assert prepared.corrected_segments[1].end_time == pytest.approx(5.0)
+
+
+def test_prepare_correction_for_output_strips_ruby_directives_from_reference_before_remap(tmp_path):
+    canonical_segments = [
+        _make_segment("ref-1", "canon one", 0.0, 0.0),
+        _make_segment("ref-ruby", "@Ruby1=君,きみ", 0.0, 0.0),
+        _make_segment("ref-2", "canon two", 0.0, 0.0),
+    ]
+    correction_result = CorrectionResult(
+        original_segments=[],
+        corrected_segments=[
+            _make_segment("countdown", CountdownProcessor.COUNTDOWN_TEXT, 0.1, 2.9),
+            _make_segment("seg-1", "please one", 3.0, 4.0),
+            _make_segment("seg-2", "thank two", 4.0, 5.0),
+        ],
+        corrections=[],
+        corrections_made=0,
+        confidence=1.0,
+        reference_lyrics={
+            "file": LyricsData(
+                source="file",
+                segments=canonical_segments,
+                metadata=LyricsMetadata(
+                    source="file",
+                    track_name="Track",
+                    artist_names="Artist",
+                    is_synced=False,
+                    lyrics_provider="file",
+                    lyrics_provider_id="lyrics.lrc",
+                ),
+            )
+        },
+        anchor_sequences=[],
+        gap_sequences=[],
+        resized_segments=[],
+        metadata={},
+        correction_steps=[],
+        word_id_map={},
+        segment_id_map={},
+    )
+
+    generator = OutputGenerator(
+        config=OutputConfig(
+            output_styles_json="",
+            output_dir=str(tmp_path),
+            cache_dir=str(tmp_path / "cache"),
+            render_video=False,
+            generate_cdg=False,
+            prefer_reference_lyrics_source="file",
+            strip_countdown_text=True,
+        )
+    )
+
+    prepared = generator._prepare_correction_for_output(correction_result)
+
+    assert [segment.text for segment in prepared.reference_lyrics["file"].segments] == ["canon one", "canon two"]
+    assert [segment.text for segment in prepared.corrected_segments] == ["canon one", "canon two"]
+
+
+def test_prepare_correction_for_output_strips_ruby_directives_from_reviewed_segments(tmp_path):
+    correction_result = CorrectionResult(
+        original_segments=[],
+        corrected_segments=[
+            _make_segment("countdown", CountdownProcessor.COUNTDOWN_TEXT, 0.1, 2.9),
+            _make_segment("seg-1", "hello world", 3.0, 4.0),
+            _make_segment("seg-ruby", "@Ruby1=君,きみ", 4.0, 4.2),
+            _make_segment("seg-2", "goodbye now", 4.2, 5.2),
+        ],
+        corrections=[],
+        corrections_made=0,
+        confidence=1.0,
+        reference_lyrics={},
+        anchor_sequences=[],
+        gap_sequences=[],
+        resized_segments=[],
+        metadata={},
+        correction_steps=[],
+        word_id_map={},
+        segment_id_map={},
+    )
+
+    generator = OutputGenerator(
+        config=OutputConfig(
+            output_styles_json="",
+            output_dir=str(tmp_path),
+            cache_dir=str(tmp_path / "cache"),
+            render_video=False,
+            generate_cdg=False,
+            strip_countdown_text=True,
+        )
+    )
+
+    prepared = generator._prepare_correction_for_output(correction_result)
+
+    assert [segment.text for segment in prepared.corrected_segments] == ["hello world", "goodbye now"]
+    assert prepared.corrected_segments[0].start_time == pytest.approx(3.0)
+    assert prepared.corrected_segments[1].start_time == pytest.approx(4.2)

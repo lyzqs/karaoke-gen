@@ -8,7 +8,7 @@ from copy import deepcopy
 from karaoke_gen.lyrics_transcriber.types import LyricsData, LyricsSegment, Word
 from karaoke_gen.lyrics_transcriber.correction.corrector import CorrectionResult
 from karaoke_gen.lyrics_transcriber.output.plain_text import PlainTextGenerator
-from karaoke_gen.lyrics_transcriber.ruby import deserialize_ruby_annotations
+from karaoke_gen.lyrics_transcriber.ruby import deserialize_ruby_annotations, is_ruby_directive_line
 from karaoke_gen.lyrics_transcriber.output.lyrics_file import LyricsFileGenerator
 from karaoke_gen.lyrics_transcriber.output.subtitles import SubtitlesGenerator
 from karaoke_gen.lyrics_transcriber.output.video import VideoGenerator
@@ -191,6 +191,18 @@ class OutputGenerator:
             self.logger.info("Removed %d countdown segment(s) from final output", removed)
         return filtered
 
+    def _strip_ruby_directive_segments(self, segments: List[LyricsSegment], context: str) -> List[LyricsSegment]:
+        """Remove non-lyric ruby control directives before final output/rendering."""
+        filtered = [
+            segment
+            for segment in segments
+            if not is_ruby_directive_line(segment.text)
+        ]
+        removed = len(segments) - len(filtered)
+        if removed:
+            self.logger.info("Removed %d ruby directive segment(s) from %s", removed, context)
+        return filtered
+
     def _copy_word_with_timing(self, source_word: Word, timed_word: Word) -> Word:
         """Return a canonical word with the timing from an existing timed word."""
         return Word(
@@ -347,6 +359,23 @@ class OutputGenerator:
     def _prepare_correction_for_output(self, correction_result: CorrectionResult) -> CorrectionResult:
         """Apply offline-only sanitization before generating final artifacts."""
         prepared = deepcopy(correction_result)
+
+        prepared.corrected_segments = self._strip_ruby_directive_segments(
+            prepared.corrected_segments,
+            "corrected segments",
+        )
+        if prepared.resized_segments:
+            prepared.resized_segments = self._strip_ruby_directive_segments(
+                prepared.resized_segments,
+                "resized segments",
+            )
+        if prepared.reference_lyrics:
+            for source, lyrics_data in prepared.reference_lyrics.items():
+                if lyrics_data and lyrics_data.segments:
+                    lyrics_data.segments = self._strip_ruby_directive_segments(
+                        lyrics_data.segments,
+                        f"reference lyrics '{source}'",
+                    )
 
         if self.config.strip_countdown_text:
             prepared.corrected_segments = self._strip_countdown_segments(prepared.corrected_segments)

@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Optional, Dict, Any
 from .base_lyrics_provider import BaseLyricsProvider, LyricsProviderConfig
-from karaoke_gen.lyrics_transcriber.ruby import load_ruby_annotations_from_lrc_file
+from karaoke_gen.lyrics_transcriber.ruby import is_ruby_directive_line, load_ruby_annotations_from_lrc_file
 from karaoke_gen.lyrics_transcriber.types import LyricsData, LyricsMetadata
 from karaoke_lyrics_processor import KaraokeLyricsProcessor
 
@@ -26,7 +26,9 @@ class FileProvider(BaseLyricsProvider):
         """Get lyrics for the specified artist and title."""
         self.title = title  # Store title for use in other methods
         self.artist = artist  # Store artist for use in other methods
-        return super().fetch_lyrics(artist, title)
+        # Local file input should always reflect the current file contents rather than
+        # any artist/title cache entry from a previous run.
+        return self._fetch_and_convert_result(artist, title)
 
     def _fetch_data_from_source(self, artist: str, title: str) -> Optional[Dict[str, Any]]:
         """Load lyrics from the specified file."""
@@ -94,14 +96,14 @@ class FileProvider(BaseLyricsProvider):
 
         for raw_line in raw_text.splitlines():
             line = raw_line.strip()
-            if not line or self._LRC_METADATA_PATTERN.fullmatch(line):
+            if not line or self._LRC_METADATA_PATTERN.fullmatch(line) or is_ruby_directive_line(line):
                 continue
 
             line = self._LRC_LINE_TIMESTAMP_PATTERN.sub("", line)
             line = self._LRC_INLINE_TIMESTAMP_PATTERN.sub("", line)
             line = re.sub(r"\s+", " ", line).strip()
 
-            if line:
+            if line and not is_ruby_directive_line(line):
                 normalized_lines.append(line)
 
         return "\n".join(normalized_lines)

@@ -76,6 +76,11 @@ def parse_ruby_annotations_from_lrc_text(text: str) -> List[RubyAnnotation]:
     return sorted(annotations, key=lambda item: item.index)
 
 
+def is_ruby_directive_line(text: str) -> bool:
+    """Return whether ``text`` is a standalone MidiCo ruby directive line."""
+    return bool(_RUBY_DIRECTIVE_RE.match(text.strip()))
+
+
 def load_ruby_annotations_from_lrc_file(filepath: str) -> List[RubyAnnotation]:
     """Load ruby annotations from an LRC file path."""
     with open(filepath, "r", encoding="utf-8-sig", errors="replace") as handle:
