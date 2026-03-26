@@ -196,6 +196,77 @@ def test_render_local_jp_video_emits_generated_lrc_for_txt_input(tmp_path, monke
         txt_timing_bridge_lrc_path=bridge_lrc_path,
     )
 
+    assert result.txt_path == output_dir / "sample.txt"
+    assert result.txt_path.exists()
+    assert result.txt_path.read_text(encoding="utf-8").splitlines() == [
+        "君を見つめた",
+        "好きな気持ちで",
+    ]
+    assert result.lrc_path == output_dir / "sample.lrc"
+    assert result.lrc_path.exists()
+    assert result.lrc_path.read_text(encoding="utf-8").splitlines() == [
+        "[00:03.00]君を見つめた",
+        "[00:05.50]好きな気持ちで",
+    ]
+
+
+def test_render_local_jp_video_retains_canonical_txt_and_lrc_for_lrc_input(tmp_path, monkeypatch):
+    audio_path = tmp_path / "sample.mp3"
+    background_path = tmp_path / "background.png"
+    timing_lrc_path = tmp_path / "lyrics.lrc"
+    output_dir = tmp_path / "out"
+    font_path = tmp_path / "font.otf"
+
+    audio_path.write_bytes(b"audio")
+    background_path.write_bytes(b"background")
+    timing_lrc_path.write_text(
+        "\n".join(
+            [
+                "[00:03.00]君を見つめた",
+                "[00:05.50]好きな気持ちで",
+                "@Ruby1=君,きみ",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    font_path.write_bytes(b"font")
+
+    monkeypatch.setattr(local_jp_renderer, "_probe_duration_ms", lambda path: 20_000)
+    monkeypatch.setattr(local_jp_renderer, "detect_font_path", lambda: font_path)
+    monkeypatch.setattr(local_jp_renderer, "load_font_set", lambda path: object())
+    monkeypatch.setattr(local_jp_renderer, "_font_family_name", lambda path: "Noto Sans CJK JP")
+
+    def fake_write_ass_subtitles(*, timed_lines, output_path, resolution, fonts, font_family):
+        output_path.write_text("ass\n", encoding="utf-8")
+        return output_path
+
+    def fake_write_timeline_debug(timed_lines, output_path):
+        output_path.write_text("{}\n", encoding="utf-8")
+        return output_path
+
+    def fake_render_video(*, audio_path, background_path, ass_path, output_path, duration_ms, resolution, font_path):
+        output_path.write_bytes(b"video")
+        return output_path
+
+    monkeypatch.setattr(local_jp_renderer, "write_ass_subtitles", fake_write_ass_subtitles)
+    monkeypatch.setattr(local_jp_renderer, "write_timeline_debug", fake_write_timeline_debug)
+    monkeypatch.setattr(local_jp_renderer, "render_video", fake_render_video)
+
+    result = render_local_jp_video(
+        audio_path=audio_path,
+        background_path=background_path,
+        output_dir=output_dir,
+        output_stem="sample",
+        timing_lrc_path=timing_lrc_path,
+    )
+
+    assert result.txt_path == output_dir / "sample.txt"
+    assert result.txt_path.exists()
+    assert result.txt_path.read_text(encoding="utf-8").splitlines() == [
+        "君を見つめた",
+        "好きな気持ちで",
+    ]
     assert result.lrc_path == output_dir / "sample.lrc"
     assert result.lrc_path.exists()
     assert result.lrc_path.read_text(encoding="utf-8").splitlines() == [

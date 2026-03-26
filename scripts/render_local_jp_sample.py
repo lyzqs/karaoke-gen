@@ -50,8 +50,8 @@ def main() -> None:
     print(f"MP4: {result.video_path}")
     print(f"ASS: {result.ass_path}")
     print(f"Timeline: {result.timeline_path}")
-    if result.lrc_path is not None:
-        print(f"LRC: {result.lrc_path}")
+    print(f"TXT: {result.txt_path}")
+    print(f"LRC: {result.lrc_path}")
     print(f"Duration ms: {result.duration_ms}")
 
 

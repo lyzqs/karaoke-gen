@@ -94,7 +94,8 @@ class RenderResult:
     ass_path: Path
     timeline_path: Path
     duration_ms: int
-    lrc_path: Optional[Path] = None
+    txt_path: Path
+    lrc_path: Path
 
 
 @dataclass(frozen=True)
@@ -508,6 +509,15 @@ def build_lrc_document(timed_lines: list[TimedLine]) -> str:
     return "\n".join(f"{_format_lrc_timestamp(line.start_ms)}{line.text}" for line in timed_lines) + "\n"
 
 
+def build_txt_document(timed_lines: list[TimedLine]) -> str:
+    return "\n".join(line.text for line in timed_lines) + "\n"
+
+
+def write_txt_sidecar(timed_lines: list[TimedLine], output_path: Path) -> Path:
+    output_path.write_text(build_txt_document(timed_lines), encoding="utf-8")
+    return output_path
+
+
 def write_lrc_sidecar(timed_lines: list[TimedLine], output_path: Path) -> Path:
     output_path.write_text(build_lrc_document(timed_lines), encoding="utf-8")
     return output_path
@@ -596,7 +606,6 @@ def render_local_jp_video(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     duration_ms = _probe_duration_ms(audio_path)
-    lrc_path: Optional[Path] = None
 
     if timing_lrc_path is not None:
         raw_lrc = timing_lrc_path.read_text(encoding="utf-8")
@@ -620,7 +629,6 @@ def render_local_jp_video(
         )
         if not timed_lines:
             raise ValueError(f"No lyric lines found in {lyrics_txt_path}")
-        lrc_path = write_lrc_sidecar(timed_lines, output_dir / f"{output_stem}.lrc")
 
     font_path = detect_font_path()
     fonts = load_font_set(font_path)
@@ -629,6 +637,8 @@ def render_local_jp_video(
     ass_path = output_dir / f"{output_stem}.ass"
     timeline_path = output_dir / f"{output_stem}.timeline.json"
     video_path = output_dir / f"{output_stem}.mp4"
+    txt_path = write_txt_sidecar(timed_lines, output_dir / f"{output_stem}.txt")
+    lrc_path = write_lrc_sidecar(timed_lines, output_dir / f"{output_stem}.lrc")
 
     write_ass_subtitles(
         timed_lines=timed_lines,
@@ -654,6 +664,7 @@ def render_local_jp_video(
         video_path=video_path,
         ass_path=ass_path,
         timeline_path=timeline_path,
+        txt_path=txt_path,
         lrc_path=lrc_path,
         duration_ms=final_duration_ms,
     )
