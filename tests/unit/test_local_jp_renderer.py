@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PIL import Image, ImageDraw
 import pytest
 
 import karaoke_gen.local_jp_renderer as local_jp_renderer
@@ -28,9 +29,12 @@ def test_parse_lrc_timed_lines_preserves_timestamps_and_resolves_explicit_ruby_d
     assert [line.text for line in timed_lines] == ["君を見つめた", "好きな気持ちで"]
     assert timed_lines[0].start_ms == 10_000
     assert timed_lines[0].end_ms == 12_500
-    assert [(group.surface, group.reading) for group in timed_lines[0].ruby_groups] == [
-        ("君", "きみ"),
-        ("見", "み"),
+    assert [
+        (group.surface, group.reading, group.char_start, group.char_end)
+        for group in timed_lines[0].ruby_groups
+    ] == [
+        ("君", "きみ", 0, 1),
+        ("見", "み", 2, 3),
     ]
 
 
@@ -83,12 +87,25 @@ def test_ass_document_uses_current_and_upcoming_lines_not_previous():
         font_family="Noto Sans CJK JP",
     )
 
-    assert "Style: CurrentLine,Noto Sans CJK JP,80" in ass
+    assert (
+        "Style: CurrentLine,Noto Sans CJK JP,80,"
+        f"{local_jp_renderer.CURRENT_ACTIVE_FILL_ASS},"
+        f"{local_jp_renderer.CURRENT_INACTIVE_FILL_ASS}"
+    ) in ass
     assert "Style: UpcomingLine,Noto Sans CJK JP,80" in ass
     assert r"{\an7\pos(116,788)\q2}" in ass
     assert r"{\an9\pos(1804,918)\q2}" in ass
     assert "Dialogue: 0,0:00:02.00,0:00:04.00,CurrentLine" in ass
     assert "Dialogue: 1,0:00:02.00,0:00:04.00,UpcomingLine" in ass
+    assert (
+        r"{\1c"
+        + local_jp_renderer.CURRENT_ACTIVE_FILL_ASS
+        + r"\2c"
+        + local_jp_renderer.CURRENT_INACTIVE_FILL_ASS
+        + r"\3c"
+        + local_jp_renderer.TEXT_OUTLINE_ASS
+        + r"}"
+    ) in ass
 
     second_window = ass.split("Dialogue: 0,0:00:02.00,0:00:04.00,CurrentLine", 1)[1]
     second_window = second_window.split("Dialogue: 0,0:00:04.00", 1)[0]
@@ -96,6 +113,43 @@ def test_ass_document_uses_current_and_upcoming_lines_not_previous():
     assert "気持ち" in second_window
     assert "抱きしめたいの" in second_window
     assert "君を見つめた" not in second_window
+
+
+def test_ruby_anchor_uses_exact_char_span_instead_of_full_token_bounds():
+    font_path = detect_font_path()
+    if font_path is None:
+        pytest.skip("No CJK font available")
+
+    timed_line = parse_lrc_timed_lines(
+        "\n".join(
+            [
+                "[00:00.00]君を見つめた",
+                "[00:02.00]次の行",
+                "@Ruby1=見,み",
+            ]
+        )
+    )[0]
+    ruby_group = next(group for group in timed_line.ruby_groups if group.surface == "見")
+    fonts = load_font_set(font_path)
+    draw = ImageDraw.Draw(Image.new("RGB", (1920, 1080)))
+    layout = local_jp_renderer._layout_line(
+        draw=draw,
+        tokens=timed_line.tokens,
+        font=fonts.main,
+        canvas_width=1920,
+        line_index=0,
+    )
+
+    ruby_center_x = local_jp_renderer._ruby_center_x(layout, ruby_group)
+    char_center_x = (
+        layout.char_bounds[ruby_group.char_start][0] + layout.char_bounds[ruby_group.char_end - 1][1]
+    ) // 2
+    token_center_x = (
+        layout.token_bounds[ruby_group.token_start][0] + layout.token_bounds[ruby_group.token_end - 1][1]
+    ) // 2
+
+    assert ruby_center_x == char_center_x
+    assert ruby_center_x < token_center_x
 
 
 def test_render_local_jp_video_emits_generated_lrc_for_txt_input(tmp_path, monkeypatch):

@@ -45,6 +45,11 @@ TXT_MIN_LEAD_OUT_MS = 2_000
 TXT_MAX_LEAD_IN_MS = 25_000
 TXT_MAX_LEAD_OUT_MS = 20_000
 
+CURRENT_ACTIVE_FILL_ASS = "&H0030C7FF&"
+CURRENT_INACTIVE_FILL_ASS = "&H00F6F6FF&"
+UPCOMING_FILL_ASS = "&H00E8F0FF&"
+TEXT_OUTLINE_ASS = "&H0010131D&"
+
 
 @dataclass(frozen=True)
 class TokenPiece:
@@ -68,6 +73,8 @@ class RubyGroup:
     reading: str
     token_start: int
     token_end: int
+    char_start: int
+    char_end: int
     start_ms: int
     end_ms: int
 
@@ -102,6 +109,7 @@ class LayoutMetrics:
     right: int
     width: int
     token_bounds: list[tuple[int, int]]
+    char_bounds: list[tuple[int, int]]
 
 
 @dataclass(frozen=True)
@@ -355,10 +363,10 @@ def build_ass_document(
         "",
         "[V4+ Styles]",
         "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
-        f"Style: CurrentLine,{font_family},{main_font_size},&H00FFFFFF,&H00FFFFFF,&H0010131D,&H50000000,1,0,0,0,100,100,0,0,1,4.4,0.7,8,64,64,0,1",
-        f"Style: UpcomingLine,{font_family},{main_font_size},&H00E9EEF7,&H00E9EEF7,&H0010131D,&H50000000,1,0,0,0,100,100,0,0,1,4.4,0.7,8,64,64,0,1",
-        f"Style: RubyCurrent,{font_family},{ruby_font_size},&H00FFF7EB,&H00FFF7EB,&H0010131D,&H46000000,0,0,0,0,100,100,0,0,1,2.4,0.4,8,64,64,0,1",
-        f"Style: RubyUpcoming,{font_family},{ruby_font_size},&H00FFF7EB,&H00FFF7EB,&H0010131D,&H46000000,0,0,0,0,100,100,0,0,1,2.4,0.4,8,64,64,0,1",
+        f"Style: CurrentLine,{font_family},{main_font_size},{CURRENT_ACTIVE_FILL_ASS},{CURRENT_INACTIVE_FILL_ASS},{TEXT_OUTLINE_ASS},&H50000000,1,0,0,0,100,100,0,0,1,4.4,0.7,8,64,64,0,1",
+        f"Style: UpcomingLine,{font_family},{main_font_size},{UPCOMING_FILL_ASS},{UPCOMING_FILL_ASS},{TEXT_OUTLINE_ASS},&H50000000,1,0,0,0,100,100,0,0,1,4.4,0.7,8,64,64,0,1",
+        f"Style: RubyCurrent,{font_family},{ruby_font_size},&H00FFF7EB,&H00FFF7EB,{TEXT_OUTLINE_ASS},&H46000000,0,0,0,0,100,100,0,0,1,2.4,0.4,8,64,64,0,1",
+        f"Style: RubyUpcoming,{font_family},{ruby_font_size},&H00FFF7EB,&H00FFF7EB,{TEXT_OUTLINE_ASS},&H46000000,0,0,0,0,100,100,0,0,1,2.4,0.4,8,64,64,0,1",
         "",
         "[Events]",
         "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
@@ -382,7 +390,7 @@ def build_ass_document(
                 style="CurrentLine",
                 text=(
                     f"{{\\an{current_alignment}\\pos({current_anchor_x},{current_y})\\q2}}"
-                    f"{{\\1c&H00F6F6FF&\\3c&H0010131D&}}{current_text}"
+                    f"{{\\1c{CURRENT_ACTIVE_FILL_ASS}\\2c{CURRENT_INACTIVE_FILL_ASS}\\3c{TEXT_OUTLINE_ASS}}}{current_text}"
                 ),
             )
         )
@@ -418,7 +426,7 @@ def build_ass_document(
                 style="UpcomingLine",
                 text=(
                     f"{{\\an{upcoming_alignment}\\pos({upcoming_anchor_x},{upcoming_y})\\q2}}"
-                    f"{{\\1c&H00E8F0FF&\\3c&H0010131D&}}{_escape_ass(upcoming_line.text)}"
+                    f"{{\\1c{UPCOMING_FILL_ASS}\\3c{TEXT_OUTLINE_ASS}}}{_escape_ass(upcoming_line.text)}"
                 ),
             )
         )
@@ -768,6 +776,8 @@ def _ruby_groups_from_resolved_directives(
                 reading=directive.ruby_text,
                 token_start=token_start,
                 token_end=token_end,
+                char_start=directive.start_char,
+                char_end=directive.end_char,
                 start_ms=tokens[token_start].start_ms,
                 end_ms=tokens[token_end - 1].end_ms,
             )
@@ -872,11 +882,28 @@ def _layout_line(
         left = right - total_width
 
     bounds: list[tuple[int, int]] = []
+    char_bounds: list[tuple[int, int]] = []
     cursor = left
-    for width in widths:
-        bounds.append((cursor, cursor + width))
-        cursor += width
-    return LayoutMetrics(left=left, right=right, width=total_width, token_bounds=bounds)
+    for token, width in zip(tokens, widths):
+        token_left = cursor
+        token_right = token_left + width
+        bounds.append((token_left, token_right))
+
+        char_cursor = token_left
+        for char_index in range(len(token.surface)):
+            prefix = token.surface[: char_index + 1]
+            char_right = token_left + _measure_text_width(draw, prefix, font)
+            char_bounds.append((char_cursor, char_right))
+            char_cursor = char_right
+
+        cursor = token_right
+    return LayoutMetrics(
+        left=left,
+        right=right,
+        width=total_width,
+        token_bounds=bounds,
+        char_bounds=char_bounds,
+    )
 
 
 def _line_anchor(line_index: int, width: int, height: int) -> tuple[int, int, int]:
@@ -894,6 +921,11 @@ def _ruby_y(line_y: int) -> int:
 
 
 def _ruby_center_x(layout: LayoutMetrics, ruby_group: RubyGroup) -> int:
+    if layout.char_bounds and ruby_group.char_end > ruby_group.char_start:
+        start_left = layout.char_bounds[ruby_group.char_start][0]
+        end_right = layout.char_bounds[ruby_group.char_end - 1][1]
+        return (start_left + end_right) // 2
+
     start_left = layout.token_bounds[ruby_group.token_start][0]
     end_right = layout.token_bounds[ruby_group.token_end - 1][1]
     return (start_left + end_right) // 2
@@ -901,6 +933,7 @@ def _ruby_center_x(layout: LayoutMetrics, ruby_group: RubyGroup) -> int:
 
 def _build_ruby_groups(tokens: list[TimedToken]) -> list[RubyGroup]:
     groups: list[RubyGroup] = []
+    token_spans = _token_char_spans(tokens)
     index = 0
 
     while index < len(tokens):
@@ -929,6 +962,8 @@ def _build_ruby_groups(tokens: list[TimedToken]) -> list[RubyGroup]:
                 reading=group_reading,
                 token_start=index,
                 token_end=end_index,
+                char_start=token_spans[index][0],
+                char_end=token_spans[end_index - 1][1],
                 start_ms=token.start_ms,
                 end_ms=group_end,
             )
