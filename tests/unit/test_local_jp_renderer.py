@@ -214,6 +214,128 @@ def test_stabilize_matched_cues_merges_zero_duration_prefix_into_following_cue()
     ]
 
 
+@pytest.mark.parametrize(
+    ("line_start_ms", "line_end_ms", "sample_ms", "expected_surface", "tokens"),
+    [
+        (
+            26_270,
+            29_020,
+            26_900,
+            "見",
+            [
+                local_jp_renderer.TimedToken(surface="君", reading="きみ", start_ms=26_070, end_ms=26_410),
+                local_jp_renderer.TimedToken(surface="を", reading="を", start_ms=26_410, end_ms=26_770),
+                local_jp_renderer.TimedToken(surface="見", reading="み", start_ms=26_770, end_ms=27_150),
+                local_jp_renderer.TimedToken(surface="つ", reading="つ", start_ms=27_150, end_ms=27_390),
+                local_jp_renderer.TimedToken(surface="め", reading="め", start_ms=27_390, end_ms=27_770),
+                local_jp_renderer.TimedToken(surface="た", reading="た", start_ms=27_770, end_ms=28_330),
+            ],
+        ),
+        (
+            108_740,
+            114_230,
+            109_800,
+            "心",
+            [
+                local_jp_renderer.TimedToken(surface="一", reading="いち", start_ms=107_840, end_ms=109_040),
+                local_jp_renderer.TimedToken(surface="気", reading="き", start_ms=109_040, end_ms=109_300),
+                local_jp_renderer.TimedToken(surface="に", reading="に", start_ms=109_300, end_ms=109_560),
+                local_jp_renderer.TimedToken(surface="心", reading="こころ", start_ms=109_560, end_ms=109_940),
+                local_jp_renderer.TimedToken(surface="を", reading="を", start_ms=109_940, end_ms=110_400),
+                local_jp_renderer.TimedToken(surface="伝", reading="つて", start_ms=110_400, end_ms=110_640),
+                local_jp_renderer.TimedToken(surface="える", reading="える", start_ms=110_640, end_ms=111_060),
+            ],
+        ),
+        (
+            108_740,
+            114_230,
+            110_500,
+            "伝",
+            [
+                local_jp_renderer.TimedToken(surface="一", reading="いち", start_ms=107_840, end_ms=109_040),
+                local_jp_renderer.TimedToken(surface="気", reading="き", start_ms=109_040, end_ms=109_300),
+                local_jp_renderer.TimedToken(surface="に", reading="に", start_ms=109_300, end_ms=109_560),
+                local_jp_renderer.TimedToken(surface="心", reading="こころ", start_ms=109_560, end_ms=109_940),
+                local_jp_renderer.TimedToken(surface="を", reading="を", start_ms=109_940, end_ms=110_400),
+                local_jp_renderer.TimedToken(surface="伝", reading="つて", start_ms=110_400, end_ms=110_640),
+                local_jp_renderer.TimedToken(surface="える", reading="える", start_ms=110_640, end_ms=111_060),
+            ],
+        ),
+        (
+            114_230,
+            119_190,
+            117_500,
+            "語",
+            [
+                local_jp_renderer.TimedToken(surface="も", reading="も", start_ms=113_330, end_ms=114_190),
+                local_jp_renderer.TimedToken(surface="っと", reading="っと", start_ms=114_190, end_ms=114_570),
+                local_jp_renderer.TimedToken(surface="会", reading="かい", start_ms=114_570, end_ms=114_910),
+                local_jp_renderer.TimedToken(surface="いた", reading="いた", start_ms=114_910, end_ms=115_350),
+                local_jp_renderer.TimedToken(surface="く", reading="く", start_ms=115_350, end_ms=115_670),
+                local_jp_renderer.TimedToken(surface="て、", reading="て、", start_ms=115_670, end_ms=116_170),
+                local_jp_renderer.TimedToken(surface="も", reading="も", start_ms=116_350, end_ms=116_850),
+                local_jp_renderer.TimedToken(surface="っと", reading="っと", start_ms=116_850, end_ms=117_210),
+                local_jp_renderer.TimedToken(surface="語", reading="ご", start_ms=117_210, end_ms=117_510),
+                local_jp_renderer.TimedToken(surface="り", reading="り", start_ms=117_510, end_ms=118_050),
+                local_jp_renderer.TimedToken(surface="たい", reading="たい", start_ms=118_050, end_ms=118_510),
+            ],
+        ),
+        (
+            145_990,
+            151_430,
+            146_900,
+            "瞬",
+            [
+                local_jp_renderer.TimedToken(surface="この", reading="この", start_ms=145_090, end_ms=146_330),
+                local_jp_renderer.TimedToken(surface="瞬", reading="まどか", start_ms=146_330, end_ms=146_830),
+                local_jp_renderer.TimedToken(surface="間", reading="ま", start_ms=146_830, end_ms=147_170),
+                local_jp_renderer.TimedToken(surface="いつ", reading="いつ", start_ms=147_170, end_ms=147_590),
+                local_jp_renderer.TimedToken(surface="ま", reading="ま", start_ms=147_590, end_ms=148_070),
+                local_jp_renderer.TimedToken(surface="でも", reading="でも", start_ms=148_070, end_ms=148_490),
+                local_jp_renderer.TimedToken(surface="守", reading="まもる", start_ms=148_490, end_ms=149_410),
+                local_jp_renderer.TimedToken(surface="り", reading="り", start_ms=149_410, end_ms=150_050),
+                local_jp_renderer.TimedToken(surface="たい", reading="たい", start_ms=150_050, end_ms=150_770),
+            ],
+        ),
+        (
+            145_990,
+            151_430,
+            149_200,
+            "守",
+            [
+                local_jp_renderer.TimedToken(surface="この", reading="この", start_ms=145_090, end_ms=146_330),
+                local_jp_renderer.TimedToken(surface="瞬", reading="まどか", start_ms=146_330, end_ms=146_830),
+                local_jp_renderer.TimedToken(surface="間", reading="ま", start_ms=146_830, end_ms=147_170),
+                local_jp_renderer.TimedToken(surface="いつ", reading="いつ", start_ms=147_170, end_ms=147_590),
+                local_jp_renderer.TimedToken(surface="ま", reading="ま", start_ms=147_590, end_ms=148_070),
+                local_jp_renderer.TimedToken(surface="でも", reading="でも", start_ms=148_070, end_ms=148_490),
+                local_jp_renderer.TimedToken(surface="守", reading="まもる", start_ms=148_490, end_ms=149_410),
+                local_jp_renderer.TimedToken(surface="り", reading="り", start_ms=149_410, end_ms=150_050),
+                local_jp_renderer.TimedToken(surface="たい", reading="たい", start_ms=150_050, end_ms=150_770),
+            ],
+        ),
+    ],
+)
+def test_normalize_aligned_tokens_to_line_window_matches_sample_windows(
+    line_start_ms,
+    line_end_ms,
+    sample_ms,
+    expected_surface,
+    tokens,
+):
+    normalized = local_jp_renderer._normalize_aligned_tokens_to_line_window(
+        tokens,
+        line_start_ms=line_start_ms,
+        line_end_ms=line_end_ms,
+    )
+
+    active_surface = next(
+        token.surface for token in normalized if token.start_ms <= sample_ms < token.end_ms
+    )
+
+    assert active_surface == expected_surface
+
+
 def test_render_local_jp_video_emits_generated_lrc_for_txt_input(tmp_path, monkeypatch):
     audio_path = tmp_path / "sample.mp3"
     background_path = tmp_path / "background.png"

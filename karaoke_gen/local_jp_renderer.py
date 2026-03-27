@@ -62,6 +62,7 @@ ALIGNMENT_DEVICE = "cpu"
 ALIGNMENT_COMPUTE_TYPE = "int8"
 ALIGNMENT_MODEL_SIZE = "small"
 MIN_ALIGNMENT_CUE_MS = 40
+ALIGNMENT_MAX_EARLY_NUDGE_MS = 100
 
 
 @dataclass(frozen=True)
@@ -560,7 +561,7 @@ def _align_timed_lines_to_audio(
     audio = _load_alignment_audio(audio_path)
     model = _get_alignment_model()
 
-    aligned_payloads: list[tuple[TimedLine, list[TimedToken]]] = []
+    aligned_lines: list[TimedLine] = []
     for line in timed_lines:
         aligned_tokens = _align_line_tokens(
             model=model,
@@ -571,30 +572,19 @@ def _align_timed_lines_to_audio(
         if not aligned_tokens:
             raise RuntimeError(f"Failed to derive aligned timings for line: {line.text}")
 
-        if aligned_payloads:
-            previous_tokens = aligned_payloads[-1][1]
-            overlap_ms = previous_tokens[-1].end_ms - aligned_tokens[0].start_ms
-            if overlap_ms > 0:
-                aligned_tokens = _shift_tokens(aligned_tokens, overlap_ms)
-
-        aligned_payloads.append((line, aligned_tokens))
-
-    aligned_lines: list[TimedLine] = []
-    aligned_starts = [tokens[0].start_ms for _, tokens in aligned_payloads]
-    for index, (line, aligned_tokens) in enumerate(aligned_payloads):
-        aligned_start_ms = aligned_starts[index]
-        if index + 1 < len(aligned_starts):
-            aligned_end_ms = aligned_starts[index + 1]
-        else:
-            aligned_end_ms = max(line.end_ms, aligned_tokens[-1].end_ms)
+        display_tokens = _normalize_aligned_tokens_to_line_window(
+            aligned_tokens,
+            line_start_ms=line.start_ms,
+            line_end_ms=line.end_ms,
+        )
 
         aligned_lines.append(
             TimedLine(
-                start_ms=aligned_start_ms,
-                end_ms=aligned_end_ms,
+                start_ms=line.start_ms,
+                end_ms=line.end_ms,
                 text=line.text,
-                tokens=aligned_tokens,
-                ruby_groups=_remap_ruby_groups(line.text, line.ruby_groups, aligned_tokens),
+                tokens=display_tokens,
+                ruby_groups=_remap_ruby_groups(line.text, line.ruby_groups, display_tokens),
             )
         )
 
@@ -679,20 +669,70 @@ def _align_line_tokens(
     return timed_tokens
 
 
-def _shift_tokens(tokens: list[TimedToken], delta_ms: int) -> list[TimedToken]:
-    return [
-        TimedToken(
-            surface=token.surface,
-            reading=token.reading,
-            pos1=token.pos1,
-            pos2=token.pos2,
-            has_kanji=token.has_kanji,
-            punctuation=token.punctuation,
-            start_ms=token.start_ms + delta_ms,
-            end_ms=token.end_ms + delta_ms,
+def _normalize_aligned_tokens_to_line_window(
+    tokens: list[TimedToken],
+    line_start_ms: int,
+    line_end_ms: int,
+) -> list[TimedToken]:
+    if not tokens:
+        return []
+
+    # Prefix-guided clip decoding often pins the first cue too close to the pre-roll boundary.
+    early_nudge_ms = min(
+        ALIGNMENT_MAX_EARLY_NUDGE_MS,
+        max(0, line_start_ms - tokens[0].start_ms),
+    )
+    normalized: list[TimedToken] = []
+    cursor = line_start_ms
+
+    for token in tokens:
+        if cursor >= line_end_ms:
+            break
+
+        shifted_start_ms = token.start_ms + early_nudge_ms
+        shifted_end_ms = token.end_ms + early_nudge_ms
+        clipped_start_ms = max(line_start_ms, shifted_start_ms)
+        clipped_end_ms = min(line_end_ms, shifted_end_ms)
+
+        if clipped_end_ms <= line_start_ms:
+            start_ms = cursor
+            end_ms = min(line_end_ms, start_ms + 1)
+        else:
+            start_ms = max(cursor, clipped_start_ms)
+            end_ms = min(line_end_ms, max(start_ms + 1, clipped_end_ms))
+
+        if end_ms <= start_ms:
+            break
+
+        normalized.append(
+            TimedToken(
+                surface=token.surface,
+                reading=token.reading,
+                pos1=token.pos1,
+                pos2=token.pos2,
+                has_kanji=token.has_kanji,
+                punctuation=token.punctuation,
+                start_ms=start_ms,
+                end_ms=end_ms,
+            )
         )
-        for token in tokens
-    ]
+        cursor = end_ms
+
+    if not normalized:
+        return [
+            TimedToken(
+                surface=tokens[0].surface,
+                reading=tokens[0].reading,
+                pos1=tokens[0].pos1,
+                pos2=tokens[0].pos2,
+                has_kanji=tokens[0].has_kanji,
+                punctuation=tokens[0].punctuation,
+                start_ms=line_start_ms,
+                end_ms=min(line_end_ms, line_start_ms + 1),
+            )
+        ]
+
+    return normalized
 
 
 def _stabilize_matched_cues(
