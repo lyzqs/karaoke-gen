@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from typing import Optional
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from karaoke_gen.video_generator import _find_cjk_font
@@ -17,6 +18,11 @@ try:
     from fugashi import Tagger
 except ImportError:  # pragma: no cover
     Tagger = None
+
+try:
+    from faster_whisper import WhisperModel
+except ImportError:  # pragma: no cover
+    WhisperModel = None
 
 
 TIMESTAMP_RE = re.compile(r"\[(\d{2}):(\d{2})(?:[.:](\d{2,3}))?\]")
@@ -49,6 +55,13 @@ CURRENT_ACTIVE_FILL_ASS = "&H0030C7FF&"
 CURRENT_INACTIVE_FILL_ASS = "&H00F6F6FF&"
 UPCOMING_FILL_ASS = "&H00E8F0FF&"
 TEXT_OUTLINE_ASS = "&H0010131D&"
+ALIGNMENT_SAMPLE_RATE = 16_000
+ALIGNMENT_PRE_ROLL_MS = 900
+ALIGNMENT_POST_ROLL_MS = 260
+ALIGNMENT_DEVICE = "cpu"
+ALIGNMENT_COMPUTE_TYPE = "int8"
+ALIGNMENT_MODEL_SIZE = "small"
+MIN_ALIGNMENT_CUE_MS = 40
 
 
 @dataclass(frozen=True)
@@ -127,6 +140,16 @@ class ResolvedRubyDirective:
     ruby_text: str
     start_char: int
     end_char: int
+
+
+@dataclass(frozen=True)
+class AudioWordCue:
+    surface: str
+    start_ms: int
+    end_ms: int
+
+
+_ALIGNMENT_MODEL: Optional["WhisperModel"] = None
 
 
 class JapaneseTokenizer:
@@ -382,7 +405,7 @@ def build_ass_document(
             line_index=index,
         )
         current_alignment, current_anchor_x, current_y = _line_anchor(index, width, height)
-        current_text = _build_karaoke_text(timed_line.tokens)
+        current_text = _build_karaoke_text(timed_line.tokens, timed_line.start_ms)
         lines.append(
             _format_dialogue(
                 layer=0,
@@ -523,6 +546,399 @@ def write_lrc_sidecar(timed_lines: list[TimedLine], output_path: Path) -> Path:
     return output_path
 
 
+def _align_timed_lines_to_audio(
+    timed_lines: list[TimedLine],
+    audio_path: Path,
+    tokenizer: Optional[JapaneseTokenizer] = None,
+) -> list[TimedLine]:
+    if not timed_lines:
+        return []
+    if WhisperModel is None:  # pragma: no cover
+        raise RuntimeError("faster-whisper is required for local JP audio alignment")
+
+    tokenizer = tokenizer or JapaneseTokenizer()
+    audio = _load_alignment_audio(audio_path)
+    model = _get_alignment_model()
+
+    aligned_payloads: list[tuple[TimedLine, list[TimedToken]]] = []
+    for line in timed_lines:
+        aligned_tokens = _align_line_tokens(
+            model=model,
+            audio=audio,
+            line=line,
+            tokenizer=tokenizer,
+        )
+        if not aligned_tokens:
+            raise RuntimeError(f"Failed to derive aligned timings for line: {line.text}")
+
+        if aligned_payloads:
+            previous_tokens = aligned_payloads[-1][1]
+            overlap_ms = previous_tokens[-1].end_ms - aligned_tokens[0].start_ms
+            if overlap_ms > 0:
+                aligned_tokens = _shift_tokens(aligned_tokens, overlap_ms)
+
+        aligned_payloads.append((line, aligned_tokens))
+
+    aligned_lines: list[TimedLine] = []
+    aligned_starts = [tokens[0].start_ms for _, tokens in aligned_payloads]
+    for index, (line, aligned_tokens) in enumerate(aligned_payloads):
+        aligned_start_ms = aligned_starts[index]
+        if index + 1 < len(aligned_starts):
+            aligned_end_ms = aligned_starts[index + 1]
+        else:
+            aligned_end_ms = max(line.end_ms, aligned_tokens[-1].end_ms)
+
+        aligned_lines.append(
+            TimedLine(
+                start_ms=aligned_start_ms,
+                end_ms=aligned_end_ms,
+                text=line.text,
+                tokens=aligned_tokens,
+                ruby_groups=_remap_ruby_groups(line.text, line.ruby_groups, aligned_tokens),
+            )
+        )
+
+    return aligned_lines
+
+
+def _get_alignment_model() -> "WhisperModel":
+    global _ALIGNMENT_MODEL
+    if _ALIGNMENT_MODEL is None:
+        _ALIGNMENT_MODEL = WhisperModel(
+            ALIGNMENT_MODEL_SIZE,
+            device=ALIGNMENT_DEVICE,
+            compute_type=ALIGNMENT_COMPUTE_TYPE,
+        )
+    return _ALIGNMENT_MODEL
+
+
+def _load_alignment_audio(audio_path: Path) -> np.ndarray:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is required for local JP audio alignment")
+
+    result = subprocess.run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-i",
+            str(audio_path),
+            "-f",
+            "f32le",
+            "-acodec",
+            "pcm_f32le",
+            "-ac",
+            "1",
+            "-ar",
+            str(ALIGNMENT_SAMPLE_RATE),
+            "pipe:1",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0 or not result.stdout:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(stderr or f"Failed to decode alignment audio from {audio_path}")
+
+    return np.frombuffer(result.stdout, dtype=np.float32).copy()
+
+
+def _align_line_tokens(
+    model: "WhisperModel",
+    audio: np.ndarray,
+    line: TimedLine,
+    tokenizer: JapaneseTokenizer,
+) -> list[TimedToken]:
+    cues = _transcribe_line_cues(model=model, audio=audio, line=line)
+    matched_cues = _stabilize_matched_cues(
+        _match_cues_to_line_text(line.text, cues, tokenizer),
+        line_end_ms=line.end_ms,
+    )
+
+    if not matched_cues:
+        raise RuntimeError(f"No aligned words matched lyric text: {line.text}")
+
+    timed_tokens: list[TimedToken] = []
+    for cue in matched_cues:
+        piece = _token_piece_from_surface(cue.surface, tokenizer)
+        start_ms = cue.start_ms
+        end_ms = max(start_ms + 1, cue.end_ms)
+        timed_tokens.append(
+            TimedToken(
+                surface=cue.surface,
+                reading=piece.reading,
+                pos1=piece.pos1,
+                pos2=piece.pos2,
+                has_kanji=piece.has_kanji,
+                punctuation=piece.punctuation,
+                start_ms=start_ms,
+                end_ms=end_ms,
+            )
+        )
+    return timed_tokens
+
+
+def _shift_tokens(tokens: list[TimedToken], delta_ms: int) -> list[TimedToken]:
+    return [
+        TimedToken(
+            surface=token.surface,
+            reading=token.reading,
+            pos1=token.pos1,
+            pos2=token.pos2,
+            has_kanji=token.has_kanji,
+            punctuation=token.punctuation,
+            start_ms=token.start_ms + delta_ms,
+            end_ms=token.end_ms + delta_ms,
+        )
+        for token in tokens
+    ]
+
+
+def _stabilize_matched_cues(
+    cues: list[AudioWordCue],
+    line_end_ms: int,
+) -> list[AudioWordCue]:
+    stabilized: list[AudioWordCue] = []
+    index = 0
+
+    while index < len(cues):
+        cue = cues[index]
+        next_cue = cues[index + 1] if index + 1 < len(cues) else None
+
+        if cue.end_ms - cue.start_ms < MIN_ALIGNMENT_CUE_MS:
+            if next_cue and next_cue.start_ms <= cue.end_ms:
+                cues[index + 1] = AudioWordCue(
+                    surface=cue.surface + next_cue.surface,
+                    start_ms=cue.start_ms,
+                    end_ms=next_cue.end_ms,
+                )
+                index += 1
+                continue
+
+            previous_cue = stabilized[-1] if stabilized else None
+            cue = AudioWordCue(
+                surface=cue.surface,
+                start_ms=cue.start_ms,
+                end_ms=_fallback_cue_end_ms(cue.start_ms, previous_cue, next_cue, line_end_ms),
+            )
+
+        stabilized.append(cue)
+        index += 1
+
+    return stabilized
+
+
+def _fallback_cue_end_ms(
+    start_ms: int,
+    previous_cue: Optional[AudioWordCue],
+    next_cue: Optional[AudioWordCue],
+    line_end_ms: int,
+) -> int:
+    default_duration_ms = max(80, min(260, max(1, line_end_ms - start_ms)))
+    candidate_durations = [default_duration_ms]
+
+    if previous_cue is not None and start_ms > previous_cue.end_ms:
+        candidate_durations.append(start_ms - previous_cue.end_ms)
+    if next_cue is not None and next_cue.start_ms > start_ms:
+        candidate_durations.append(next_cue.start_ms - start_ms)
+
+    duration_ms = min(duration for duration in candidate_durations if duration > 0)
+    return min(line_end_ms, start_ms + max(1, duration_ms))
+
+
+def _transcribe_line_cues(
+    model: "WhisperModel",
+    audio: np.ndarray,
+    line: TimedLine,
+) -> list[AudioWordCue]:
+    clip_start_ms = max(0, line.start_ms - ALIGNMENT_PRE_ROLL_MS)
+    clip_end_ms = min(len(audio) * 1000 // ALIGNMENT_SAMPLE_RATE, line.end_ms + ALIGNMENT_POST_ROLL_MS)
+    start_index = max(0, round(clip_start_ms * ALIGNMENT_SAMPLE_RATE / 1000))
+    end_index = min(len(audio), round(clip_end_ms * ALIGNMENT_SAMPLE_RATE / 1000))
+    clip_audio = audio[start_index:end_index]
+    if len(clip_audio) == 0:
+        return []
+
+    segments, _ = model.transcribe(
+        clip_audio,
+        language="ja",
+        vad_filter=False,
+        word_timestamps=True,
+        beam_size=1,
+        temperature=0,
+        condition_on_previous_text=False,
+        prefix=line.text,
+    )
+
+    cues: list[AudioWordCue] = []
+    for segment in segments:
+        for word in segment.words or []:
+            surface = (word.word or "").strip()
+            if not surface:
+                continue
+            start_ms = clip_start_ms + round(word.start * 1000)
+            end_ms = clip_start_ms + round(word.end * 1000)
+            cues.append(AudioWordCue(surface=surface, start_ms=start_ms, end_ms=end_ms))
+    return cues
+
+
+def _match_cues_to_line_text(
+    text: str,
+    cues: list[AudioWordCue],
+    tokenizer: JapaneseTokenizer,
+) -> list[AudioWordCue]:
+    matched: list[AudioWordCue] = []
+    cursor = 0
+
+    for cue in cues:
+        if cursor >= len(text):
+            break
+
+        leading_punctuation = ""
+        while cursor < len(text) and _is_punctuation(text[cursor]):
+            leading_punctuation += text[cursor]
+            cursor += 1
+
+        if cursor >= len(text):
+            break
+
+        fragment = _match_cue_surface_to_remaining_text(cue.surface, text[cursor:], tokenizer)
+        if not fragment:
+            continue
+
+        if leading_punctuation:
+            fragment = leading_punctuation + fragment
+
+        matched.append(
+            AudioWordCue(
+                surface=fragment,
+                start_ms=cue.start_ms,
+                end_ms=cue.end_ms,
+            )
+        )
+        cursor += len(fragment) - len(leading_punctuation)
+
+    if cursor < len(text):
+        trailing = text[cursor:]
+        if matched and all(_is_punctuation(char) for char in trailing):
+            last = matched.pop()
+            matched.append(
+                AudioWordCue(
+                    surface=last.surface + trailing,
+                    start_ms=last.start_ms,
+                    end_ms=last.end_ms,
+                )
+            )
+            cursor = len(text)
+
+    if cursor < len(text):
+        raise RuntimeError(f"Unmatched lyric suffix during alignment: {text[cursor:]} in {text}")
+
+    return matched
+
+
+def _match_cue_surface_to_remaining_text(
+    cue_surface: str,
+    remaining_text: str,
+    tokenizer: JapaneseTokenizer,
+) -> str:
+    cue_surface = cue_surface.strip()
+    if not cue_surface or not remaining_text:
+        return ""
+
+    prefix_length = _longest_common_prefix(cue_surface, remaining_text)
+    if prefix_length > 0:
+        return remaining_text[:prefix_length]
+
+    cue_reading = _reading_for_surface(cue_surface, tokenizer)
+    best = ""
+    max_length = min(len(remaining_text), max(len(cue_surface) + 2, 1))
+    for length in range(1, max_length + 1):
+        candidate = remaining_text[:length]
+        candidate_reading = _reading_for_surface(candidate, tokenizer)
+        if not candidate_reading:
+            continue
+        if cue_reading.startswith(candidate_reading) or candidate_reading.startswith(cue_reading):
+            if len(candidate) > len(best):
+                best = candidate
+    return best
+
+
+def _reading_for_surface(surface: str, tokenizer: JapaneseTokenizer) -> str:
+    pieces = tokenizer.tokenize(surface)
+    if not pieces:
+        return _kata_to_hiragana(surface)
+    return "".join(piece.reading for piece in pieces)
+
+
+def _longest_common_prefix(left: str, right: str) -> int:
+    prefix_length = 0
+    for left_char, right_char in zip(left, right):
+        if left_char != right_char:
+            break
+        prefix_length += 1
+    return prefix_length
+
+
+def _token_piece_from_surface(surface: str, tokenizer: JapaneseTokenizer) -> TokenPiece:
+    pieces = tokenizer.tokenize(surface)
+    if not pieces:
+        return TokenPiece(
+            surface=surface,
+            reading=_kata_to_hiragana(surface),
+            has_kanji=bool(KANJI_RE.search(surface)),
+            punctuation=_is_punctuation(surface),
+        )
+
+    if len(pieces) == 1 and pieces[0].surface == surface:
+        return pieces[0]
+
+    return TokenPiece(
+        surface=surface,
+        reading="".join(piece.reading for piece in pieces),
+        pos1=pieces[0].pos1,
+        pos2=pieces[-1].pos2,
+        has_kanji=any(piece.has_kanji for piece in pieces),
+        punctuation=all(piece.punctuation for piece in pieces),
+    )
+
+
+def _remap_ruby_groups(
+    text: str,
+    ruby_groups: list[RubyGroup],
+    display_tokens: list[TimedToken],
+) -> list[RubyGroup]:
+    display_spans = _token_char_spans(display_tokens)
+    remapped: list[RubyGroup] = []
+
+    for group in ruby_groups:
+        overlapping_indexes = [
+            index
+            for index, (start_char, end_char) in enumerate(display_spans)
+            if end_char > group.char_start and start_char < group.char_end
+        ]
+        if not overlapping_indexes:
+            continue
+
+        token_start = overlapping_indexes[0]
+        token_end = overlapping_indexes[-1] + 1
+        remapped.append(
+            RubyGroup(
+                surface=text[group.char_start : group.char_end],
+                reading=group.reading,
+                token_start=token_start,
+                token_end=token_end,
+                char_start=group.char_start,
+                char_end=group.char_end,
+                start_ms=display_tokens[token_start].start_ms,
+                end_ms=display_tokens[token_end - 1].end_ms,
+            )
+        )
+
+    return remapped
+
+
 def render_video(
     audio_path: Path,
     background_path: Path,
@@ -606,10 +1022,11 @@ def render_local_jp_video(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     duration_ms = _probe_duration_ms(audio_path)
+    tokenizer = JapaneseTokenizer()
 
     if timing_lrc_path is not None:
         raw_lrc = timing_lrc_path.read_text(encoding="utf-8")
-        timed_lines = parse_lrc_timed_lines(raw_lrc)
+        timed_lines = parse_lrc_timed_lines(raw_lrc, tokenizer=tokenizer)
         if not timed_lines:
             raise ValueError(f"No timed lyric lines found in {timing_lrc_path}")
         duration_ms = duration_ms or max(line.end_ms for line in timed_lines)
@@ -617,7 +1034,10 @@ def render_local_jp_video(
         raw_txt = lyrics_txt_path.read_text(encoding="utf-8")
         bridge_lines = None
         if txt_timing_bridge_lrc_path is not None:
-            bridge_lines = parse_lrc_timed_lines(txt_timing_bridge_lrc_path.read_text(encoding="utf-8"))
+            bridge_lines = parse_lrc_timed_lines(
+                txt_timing_bridge_lrc_path.read_text(encoding="utf-8"),
+                tokenizer=tokenizer,
+            )
             if bridge_lines:
                 duration_ms = duration_ms or max(line.end_ms for line in bridge_lines)
         if duration_ms is None:
@@ -625,10 +1045,17 @@ def render_local_jp_video(
         timed_lines = parse_txt_timed_lines(
             raw_txt,
             duration_ms=duration_ms,
+            tokenizer=tokenizer,
             timing_bridge_lines=bridge_lines,
         )
         if not timed_lines:
             raise ValueError(f"No lyric lines found in {lyrics_txt_path}")
+
+    timed_lines = _align_timed_lines_to_audio(
+        timed_lines=timed_lines,
+        audio_path=audio_path,
+        tokenizer=tokenizer,
+    )
 
     font_path = detect_font_path()
     fonts = load_font_set(font_path)
@@ -866,11 +1293,17 @@ def _build_ruby_dialogue_lines(
     ]
 
 
-def _build_karaoke_text(tokens: list[TimedToken]) -> str:
+def _build_karaoke_text(tokens: list[TimedToken], line_start_ms: int) -> str:
     parts: list[str] = []
+    cursor = line_start_ms
     for token in tokens:
+        gap_duration_ms = max(0, token.start_ms - cursor)
+        if gap_duration_ms > 0:
+            parts.append(r"{\k" + str(max(1, round(gap_duration_ms / 10))) + r"}")
+
         duration_cs = max(1, round((token.end_ms - token.start_ms) / 10))
         parts.append(r"{\kf" + str(duration_cs) + r"}" + _escape_ass(token.surface))
+        cursor = token.end_ms
     return "".join(parts)
 
 
@@ -943,45 +1376,104 @@ def _ruby_center_x(layout: LayoutMetrics, ruby_group: RubyGroup) -> int:
 
 
 def _build_ruby_groups(tokens: list[TimedToken]) -> list[RubyGroup]:
-    groups: list[RubyGroup] = []
-    token_spans = _token_char_spans(tokens)
-    index = 0
+    lyric_text = "".join(token.surface for token in tokens)
+    tokenizer = JapaneseTokenizer()
+    lyric_tokens = tokenizer.tokenize(lyric_text)
+    display_spans = _token_char_spans(tokens)
 
-    while index < len(tokens):
-        token = tokens[index]
-        if not token.has_kanji or token.punctuation:
-            index += 1
+    groups: list[RubyGroup] = []
+    cursor = 0
+    for piece in lyric_tokens:
+        piece_start = cursor
+        piece_end = piece_start + len(piece.surface)
+        cursor = piece_end
+
+        if not piece.has_kanji or piece.punctuation:
             continue
 
-        group_surface = token.surface
-        group_reading = token.reading
-        group_end = token.end_ms
-        end_index = index + 1
-        last_token = token
+        for token_char_start, token_char_end, reading in _token_ruby_segments(piece.surface, piece.reading):
+            full_char_start = piece_start + token_char_start
+            full_char_end = piece_start + token_char_end
+            overlapping_indexes = [
+                index
+                for index, (start_char, end_char) in enumerate(display_spans)
+                if end_char > full_char_start and start_char < full_char_end
+            ]
+            if not overlapping_indexes or not reading:
+                continue
 
-        while end_index < len(tokens) and _should_extend_ruby_group(token, last_token, tokens[end_index]):
-            next_token = tokens[end_index]
-            group_surface += next_token.surface
-            group_reading += next_token.reading
-            group_end = next_token.end_ms
-            last_token = next_token
-            end_index += 1
-
-        groups.append(
-            RubyGroup(
-                surface=group_surface,
-                reading=group_reading,
-                token_start=index,
-                token_end=end_index,
-                char_start=token_spans[index][0],
-                char_end=token_spans[end_index - 1][1],
-                start_ms=token.start_ms,
-                end_ms=group_end,
+            token_start = overlapping_indexes[0]
+            token_end = overlapping_indexes[-1] + 1
+            groups.append(
+                RubyGroup(
+                    surface=lyric_text[full_char_start:full_char_end],
+                    reading=reading,
+                    token_start=token_start,
+                    token_end=token_end,
+                    char_start=full_char_start,
+                    char_end=full_char_end,
+                    start_ms=tokens[token_start].start_ms,
+                    end_ms=tokens[token_end - 1].end_ms,
+                )
             )
-        )
-        index = end_index
 
     return groups
+
+
+def _token_ruby_segments(surface: str, reading: str) -> list[tuple[int, int, str]]:
+    normalized_reading = _kata_to_hiragana(reading or surface)
+    if not surface or not normalized_reading or not KANJI_RE.search(surface):
+        return []
+
+    parts: list[tuple[bool, str, int, int]] = []
+    start = 0
+    while start < len(surface):
+        is_kanji = bool(KANJI_RE.fullmatch(surface[start]))
+        end = start + 1
+        while end < len(surface) and bool(KANJI_RE.fullmatch(surface[end])) == is_kanji:
+            end += 1
+        parts.append((is_kanji, surface[start:end], start, end))
+        start = end
+
+    reading_cursor = 0
+    pending_run: Optional[tuple[int, int, int]] = None
+    segments: list[tuple[int, int, str]] = []
+
+    for is_kanji, part_text, part_start, part_end in parts:
+        if is_kanji:
+            pending_run = (part_start, part_end, reading_cursor)
+            continue
+
+        anchor = _normalize_ruby_anchor(part_text)
+        if not anchor:
+            continue
+
+        match_index = normalized_reading.find(anchor, reading_cursor)
+        if pending_run is not None:
+            run_start, run_end, reading_start = pending_run
+            ruby_reading = normalized_reading[reading_start:match_index] if match_index >= reading_start else ""
+            if ruby_reading:
+                segments.append((run_start, run_end, ruby_reading))
+            pending_run = None
+
+        if match_index == -1:
+            reading_cursor = min(len(normalized_reading), reading_cursor + len(anchor))
+        else:
+            reading_cursor = match_index + len(anchor)
+
+    if pending_run is not None:
+        run_start, run_end, reading_start = pending_run
+        ruby_reading = normalized_reading[reading_start:]
+        if ruby_reading:
+            segments.append((run_start, run_end, ruby_reading))
+
+    return segments
+
+
+def _normalize_ruby_anchor(text: str) -> str:
+    if _is_punctuation(text):
+        return ""
+    return _kata_to_hiragana(text)
 
 
 def _should_extend_ruby_group(head: TimedToken, last: TimedToken, next_token: TimedToken) -> bool:

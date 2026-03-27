@@ -152,6 +152,68 @@ def test_ruby_anchor_uses_exact_char_span_instead_of_full_token_bounds():
     assert ruby_center_x < token_center_x
 
 
+def test_auto_ruby_groups_only_cover_mixed_token_kanji_chars():
+    timed_line = parse_lrc_timed_lines(
+        "\n".join(
+            [
+                "[00:00.00]見つめたい",
+                "[00:02.00]心を語りたい",
+            ]
+        )
+    )[0]
+
+    mixed_group = next(group for group in timed_line.ruby_groups if group.surface == "見")
+
+    assert mixed_group.reading == "み"
+    assert mixed_group.char_start == 0
+    assert mixed_group.char_end == 1
+
+
+def test_match_cues_to_line_text_trims_trailing_hallucination_but_keeps_exact_lyric_surface():
+    tokenizer = local_jp_renderer.JapaneseTokenizer()
+    cues = [
+        local_jp_renderer.AudioWordCue(surface="広", start_ms=0, end_ms=180),
+        local_jp_renderer.AudioWordCue(surface="が", start_ms=180, end_ms=360),
+        local_jp_renderer.AudioWordCue(surface="る", start_ms=360, end_ms=520),
+        local_jp_renderer.AudioWordCue(surface="パ", start_ms=520, end_ms=700),
+        local_jp_renderer.AudioWordCue(surface="ノ", start_ms=700, end_ms=860),
+        local_jp_renderer.AudioWordCue(surface="ラ", start_ms=860, end_ms=1_020),
+        local_jp_renderer.AudioWordCue(surface="マ", start_ms=1_020, end_ms=1_180),
+        local_jp_renderer.AudioWordCue(surface="ー", start_ms=1_180, end_ms=1_360),
+    ]
+
+    matched = local_jp_renderer._match_cues_to_line_text("広がるパノラマ", cues, tokenizer)
+
+    assert "".join(cue.surface for cue in matched) == "広がるパノラマ"
+    assert [cue.surface for cue in matched] == ["広", "が", "る", "パ", "ノ", "ラ", "マ"]
+
+
+def test_build_karaoke_text_inserts_real_timing_gaps_between_aligned_tokens():
+    tokens = [
+        local_jp_renderer.TimedToken(surface="君", reading="きみ", start_ms=220, end_ms=520),
+        local_jp_renderer.TimedToken(surface="を", reading="を", start_ms=600, end_ms=820),
+    ]
+
+    karaoke_text = local_jp_renderer._build_karaoke_text(tokens, line_start_ms=100)
+
+    assert karaoke_text.startswith(r"{\k12}{\kf30}君")
+    assert r"{\k8}{\kf22}を" in karaoke_text
+
+
+def test_stabilize_matched_cues_merges_zero_duration_prefix_into_following_cue():
+    stabilized = local_jp_renderer._stabilize_matched_cues(
+        [
+            local_jp_renderer.AudioWordCue(surface="好", start_ms=88520, end_ms=88520),
+            local_jp_renderer.AudioWordCue(surface="き！'", start_ms=88520, end_ms=88840),
+        ],
+        line_end_ms=90000,
+    )
+
+    assert stabilized == [
+        local_jp_renderer.AudioWordCue(surface="好き！'", start_ms=88520, end_ms=88840),
+    ]
+
+
 def test_render_local_jp_video_emits_generated_lrc_for_txt_input(tmp_path, monkeypatch):
     audio_path = tmp_path / "sample.mp3"
     background_path = tmp_path / "background.png"
@@ -186,6 +248,7 @@ def test_render_local_jp_video_emits_generated_lrc_for_txt_input(tmp_path, monke
     monkeypatch.setattr(local_jp_renderer, "write_ass_subtitles", fake_write_ass_subtitles)
     monkeypatch.setattr(local_jp_renderer, "write_timeline_debug", fake_write_timeline_debug)
     monkeypatch.setattr(local_jp_renderer, "render_video", fake_render_video)
+    monkeypatch.setattr(local_jp_renderer, "_align_timed_lines_to_audio", lambda timed_lines, audio_path, tokenizer=None: timed_lines)
 
     result = render_local_jp_video(
         audio_path=audio_path,
@@ -252,6 +315,7 @@ def test_render_local_jp_video_retains_canonical_txt_and_lrc_for_lrc_input(tmp_p
     monkeypatch.setattr(local_jp_renderer, "write_ass_subtitles", fake_write_ass_subtitles)
     monkeypatch.setattr(local_jp_renderer, "write_timeline_debug", fake_write_timeline_debug)
     monkeypatch.setattr(local_jp_renderer, "render_video", fake_render_video)
+    monkeypatch.setattr(local_jp_renderer, "_align_timed_lines_to_audio", lambda timed_lines, audio_path, tokenizer=None: timed_lines)
 
     result = render_local_jp_video(
         audio_path=audio_path,
