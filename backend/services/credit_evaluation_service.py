@@ -26,11 +26,12 @@ class CreditEvaluation:
     reasoning: str
     confidence: float
     error: Optional[str] = None  # Set if evaluation failed (decision defaults to "grant")
+    signals: Optional[dict] = None  # Collected abuse signals (for admin review emails)
 
 
 SYSTEM_PROMPT = """You are an anti-abuse evaluator for Nomad Karaoke, a web service that creates professional karaoke videos. Each job costs the service real money in API credits and cloud compute.
 
-New users get 2 free welcome credits to try the service. Users who complete 2 jobs and submit feedback get 2 more credits. Some users abuse this by creating multiple accounts to get unlimited free karaoke generation.
+New users get 1 free welcome credit to try the service. Users who complete 2 jobs and submit feedback get 1 more credit. Some users abuse this by creating multiple accounts to get unlimited free karaoke generation.
 
 Your job: Given the signals below, decide whether to GRANT or DENY free credits to this user.
 
@@ -291,13 +292,20 @@ class CreditEvaluationService:
 
     def _call_gemini(self, prompt: str) -> str:
         """Call Gemini and return the response text."""
-        import google.generativeai as genai
+        from google import genai
 
-        model = genai.GenerativeModel(
-            model_name=self.settings.credit_eval_model,
-            system_instruction=SYSTEM_PROMPT,
+        client = genai.Client(
+            vertexai=True,
+            project=self.settings.google_cloud_project,
+            location="global",
         )
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model=self.settings.credit_eval_model,
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+            ),
+        )
         return response.text
 
     def _log_evaluation(
@@ -374,6 +382,7 @@ class CreditEvaluationService:
                     decision="grant",
                     reasoning="No suspicious correlations found — clean user",
                     confidence=1.0,
+                    signals=signals,
                 )
                 self._log_evaluation(email, grant_type, evaluation, signals)
                 return evaluation
@@ -394,6 +403,7 @@ class CreditEvaluationService:
 
             response_text = self._call_gemini(prompt)
             evaluation = _parse_gemini_response(response_text)
+            evaluation.signals = signals
 
             self._log_evaluation(email, grant_type, evaluation, signals)
             logger.info(
@@ -404,14 +414,17 @@ class CreditEvaluationService:
 
         except Exception as e:
             logger.exception(f"Credit evaluation failed for {email} — pending manual review (fail-closed)")
+            # Include whatever signals were collected before the failure
+            collected_signals = locals().get("signals")
             evaluation = CreditEvaluation(
                 decision="pending_review",
                 reasoning="Evaluation failed — pending manual review",
                 confidence=0.0,
                 error=str(e),
+                signals=collected_signals,
             )
             try:
-                self._log_evaluation(email, grant_type, evaluation, {})
+                self._log_evaluation(email, grant_type, evaluation, collected_signals or {})
             except Exception:
                 pass
             return evaluation

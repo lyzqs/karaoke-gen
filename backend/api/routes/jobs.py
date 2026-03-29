@@ -1693,11 +1693,14 @@ async def retry_job(
                 "retry_stage": "video_generation"
             }
         
-        # If we have corrections and screens but no video, retry render
-        elif (file_urls.get('lyrics', {}).get('corrections') and 
-              file_urls.get('screens', {}).get('title')):
-            
-            logger.info(f"Job {job_id}: Has corrections and screens, retrying from render stage")
+        # If we have corrections, screens, AND review was completed, retry render
+        # Review completion is proven by instrumental_selection in state_data
+        # (set only when user submits the review endpoint)
+        elif (file_urls.get('lyrics', {}).get('corrections') and
+              file_urls.get('screens', {}).get('title') and
+              state_data.get('instrumental_selection')):
+
+            logger.info(f"Job {job_id}: Has corrections, screens, and completed review — retrying from render stage")
 
             # Clear error state and reset worker progress for idempotency
             job_manager.update_job(job_id, {
@@ -1717,15 +1720,47 @@ async def retry_job(
                     status_code=500,
                     detail="Failed to transition job status for retry"
                 )
-            
+
             # Trigger render video worker
             background_tasks.add_task(worker_service.trigger_render_video_worker, job_id)
-            
+
             return {
                 "status": "success",
                 "job_status": "review_complete",
                 "message": "Job retry started from render stage",
                 "retry_stage": "render_video"
+            }
+
+        # If we have corrections and screens but review was NOT completed,
+        # return to awaiting_review so the user can review lyrics
+        elif (file_urls.get('lyrics', {}).get('corrections') and
+              file_urls.get('screens', {}).get('title')):
+
+            logger.info(f"Job {job_id}: Has corrections and screens but review not completed — returning to review")
+
+            # Clear error state
+            job_manager.update_job(job_id, {
+                'error_message': None,
+                'error_details': None,
+            })
+
+            # Transition to AWAITING_REVIEW so user can review lyrics
+            if not job_manager.transition_to_state(
+                job_id=job_id,
+                new_status=JobStatus.AWAITING_REVIEW,
+                progress=55,
+                message=f"Ready for review. Please review lyrics and select your instrumental."
+            ):
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to transition job status for retry"
+                )
+
+            return {
+                "status": "success",
+                "job_status": "awaiting_review",
+                "message": "Job retry: returning to lyrics review (review was not completed before failure)",
+                "retry_stage": "awaiting_review"
             }
         
         # If we have stems and corrections, retry from screens generation

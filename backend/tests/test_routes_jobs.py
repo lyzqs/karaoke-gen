@@ -224,7 +224,38 @@ class TestRetryEndpoint:
         assert has_video and has_instrumental_selection
 
     def test_retry_checkpoint_detection_render_stage(self):
-        """Test retry detects render stage checkpoint."""
+        """Test retry detects render stage checkpoint when review was completed."""
+        job = Job(
+            job_id="test123",
+            status=JobStatus.FAILED,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            artist="Test",
+            title="Song",
+            file_urls={
+                'lyrics': {'corrections': 'gs://bucket/path/corrections.json'},
+                'screens': {'title': 'gs://bucket/path/title.mov'}
+            },
+            state_data={
+                'instrumental_selection': 'clean'
+            }
+        )
+
+        # This job has corrections, screens, AND completed review - should retry from render
+        has_corrections = job.file_urls.get('lyrics', {}).get('corrections')
+        has_screens = job.file_urls.get('screens', {}).get('title')
+        has_video = job.file_urls.get('videos', {}).get('with_vocals')
+        has_review = (job.state_data or {}).get('instrumental_selection')
+        assert has_corrections and has_screens and not has_video and has_review
+
+    def test_retry_checkpoint_returns_to_review_when_not_completed(self):
+        """Test retry returns to awaiting_review when corrections and screens exist
+        but user never completed the review (no instrumental_selection).
+
+        Regression test: previously, retry would skip to REVIEW_COMPLETE based solely
+        on corrections.json + title.mov existing, but these are auto-generated artifacts
+        that exist BEFORE the user reviews anything.
+        """
         job = Job(
             job_id="test123",
             status=JobStatus.FAILED,
@@ -236,13 +267,15 @@ class TestRetryEndpoint:
                 'lyrics': {'corrections': 'gs://bucket/path/corrections.json'},
                 'screens': {'title': 'gs://bucket/path/title.mov'}
             }
+            # No state_data.instrumental_selection — review was never completed
         )
 
-        # This job has corrections and screens - should retry from render
+        # Has corrections and screens but NO review completion
         has_corrections = job.file_urls.get('lyrics', {}).get('corrections')
         has_screens = job.file_urls.get('screens', {}).get('title')
-        has_video = job.file_urls.get('videos', {}).get('with_vocals')
-        assert has_corrections and has_screens and not has_video
+        has_review = (job.state_data or {}).get('instrumental_selection')
+        # Should match the "awaiting_review" checkpoint, NOT "render"
+        assert has_corrections and has_screens and not has_review
 
     def test_retry_checkpoint_detection_from_beginning(self):
         """Test retry detects need to restart from beginning."""

@@ -944,7 +944,7 @@ Credits are checked and deducted at job creation time. The flow:
 3. **Deduct** - `user_service.deduct_credit()` atomically deducts 1 credit (with job_id for audit trail)
 4. **Refund on failure** - If the job fails, 1 credit is automatically refunded
 
-Admin users bypass credit checks entirely. New users receive 2 welcome credits. Users can earn 2 additional free credits by submitting product feedback after completing 2+ jobs (see [User Feedback for Credits](#user-feedback-for-credits)).
+Admin users bypass credit checks entirely. New users receive 1 welcome credit. Users can earn 1 additional free credit by submitting product feedback after completing 2+ jobs (see [User Feedback for Credits](#user-feedback-for-credits)).
 
 #### 402 Response
 
@@ -969,7 +969,7 @@ Handles `checkout.session.completed` events.
 
 ### User Feedback for Credits
 
-Users who have completed 2+ jobs can submit feedback to earn 2 free credits.
+Users who have completed 2+ jobs can submit feedback to earn 1 free credit.
 
 #### Check Eligibility
 
@@ -984,7 +984,7 @@ Response:
   "eligible": true,
   "has_submitted": false,
   "jobs_completed": 3,
-  "credits_reward": 2
+  "credits_reward": 1
 }
 ```
 
@@ -1013,7 +1013,7 @@ Requirements:
 - At least one text field must have >50 characters
 - User can only submit once (duplicate prevention)
 
-Grants 2 credits on success. Feedback stored in `user_feedback` Firestore collection.
+Grants 1 credit on success. Feedback stored in `user_feedback` Firestore collection.
 
 The `/api/users/me` response includes `feedback_eligible: bool` so the frontend can show/hide feedback prompts without an extra API call.
 

@@ -34,7 +34,7 @@ Gemini decision:
 
 | Scenario | Credits | User Experience | Admin Notification |
 |----------|---------|-----------------|-------------------|
-| Clean user (no correlations) | Granted | "2 free credits!" interstitial | None |
+| Clean user (no correlations) | Granted | "1 free credit!" interstitial | None |
 | AI approves | Granted | Same | None |
 | AI denies (abuse detected) | Not granted | "Couldn't grant free credits" + buy CTA | CC on rejection email to user |
 | AI error / uncertain | Not granted | "Team will review shortly" + buy CTA | Review email with admin page link |
@@ -109,7 +109,7 @@ When you receive a "Credit review needed" email:
 
 1. Click the "Review User" link to go to their admin page
 2. Check their abuse signals: fingerprint matches, IP matches, job history
-3. If legitimate: Use the admin credits endpoint to grant 2 credits manually
+3. If legitimate: Use the admin credits endpoint to grant 1 credit manually
 4. If abusive: No action needed — they already have 0 credits
 
 Note: For `pending_review` cases, the `welcome_credits_granted` flag is NOT set, so the system won't interfere if you grant credits manually later.
